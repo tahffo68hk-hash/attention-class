@@ -1,0 +1,245 @@
+:root {
+  --color-bg: #0f172a;
+  --color-surface: #1e293b;
+  --color-surface-2: #273449;
+  --color-border: #334155;
+  --color-text: #e2e8f0;
+  --color-text-dim: #94a3b8;
+  --color-primary: #38bdf8;
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --radius: 10px;
+  --sidebar-width: 232px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'Microsoft YaHei', 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex: 0 0 var(--sidebar-width);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  padding: 20px 14px;
+}
+
+.sidebar__brand {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.5;
+  padding: 0 8px 16px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 14px;
+}
+
+.sidebar__brand small {
+  display: block;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--color-text-dim);
+  margin-top: 4px;
+}
+
+.sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar__link {
+  display: block;
+  padding: 9px 12px;
+  border-radius: 8px;
+  color: var(--color-text-dim);
+  transition: background 0.15s, color 0.15s;
+}
+
+.sidebar__link:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.sidebar__link--active {
+  background: var(--color-surface-2);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.sidebar__footer {
+  margin-top: 24px;
+  padding: 12px 8px 0;
+  border-top: 1px solid var(--color-border);
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+
+.content {
+  flex: 1;
+  padding: 24px 28px 48px;
+  max-width: 1180px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.page-subtitle {
+  color: var(--color-text-dim);
+  margin: 0 0 20px;
+  font-size: 13px;
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.card__title {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 12px;
+}
+
+.grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.stat {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.stat__label {
+  font-size: 12px;
+  color: var(--color-text-dim);
+}
+
+.stat__value {
+  font-size: 24px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.stat__value--ok {
+  color: var(--color-success);
+}
+
+.stat__value--warn {
+  color: var(--color-warning);
+}
+
+.stat__value--bad {
+  color: var(--color-danger);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--color-text-dim);
+}
+
+.kv dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-dim);
+  margin-right: 6px;
+  margin-bottom: 6px;
+}
+
+.tag--ok {
+  color: var(--color-success);
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
+.tag--warn {
+  color: var(--color-warning);
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.tag--info {
+  color: var(--color-primary);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.btn {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.note {
+  color: var(--color-text-dim);
+  font-size: 12px;
+}
+
+ul.plain {
+  margin: 0;
+  padding-left: 18px;
+}
+
+ul.plain li {
+  margin-bottom: 6px;
+}

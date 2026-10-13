@@ -1,0 +1,24 @@
+{
+  "name": "hospital-bed-allocation-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "医院床位智能分配与住院入院预办理系统 —— 前端管理后台（Vue 3 + TypeScript + Vite）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "vue": "^3.5.12",
+    "vue-router": "^4.4.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10",
+    "vue-tsc": "^2.1.10"
+  }
+}

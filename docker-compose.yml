@@ -1,0 +1,66 @@
+# 医院床位智能分配与住院入院预办理原型系统 —— Docker Compose
+#
+#   docker compose up -d --build        启动全部服务
+#   docker compose logs -f backend      查看后端日志
+#   docker compose exec backend python seed.py   写入演示数据
+#   docker compose down -v              停止并清空数据卷
+#
+# 服务端口：
+#   前端  http://localhost:8080
+#   后端  http://localhost:8000/docs
+#   MySQL localhost:3307（映射自容器 3306，仅本机可访问）
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: hospital-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root1234
+      MYSQL_DATABASE: hospital
+      MYSQL_USER: hospital_app
+      MYSQL_PASSWORD: hospital_pwd_2026
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot1234"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    container_name: hospital-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+pymysql://hospital_app:hospital_pwd_2026@mysql:3306/hospital?charset=utf8mb4
+      TEST_DATABASE_URL: mysql+pymysql://hospital_app:hospital_pwd_2026@mysql:3306/hospital?charset=utf8mb4
+      SECRET_KEY: dev-secret-please-change-in-production
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      TZ: Asia/Shanghai
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: hospital-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  mysql_data:
