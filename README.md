@@ -165,9 +165,26 @@ docker compose exec backend python seed.py     # 写入演示数据
    → `403 PERMISSION_DENIED`；再用 `admin` 调 `GET /api/v1/audit-logs?action=PERMISSION_DENIED`
    → 能看到 `viewer01 / FAILURE` 的审计记录。
 
-前端管理后台（`npm run dev`）当前提供项目首页与系统状态页；
-业务页面（看板、床位列表、住院证、推荐结果、分配记录）已具备完整后端接口，
-前端页面在后续迭代中补充。
+### 前端管理后台页面
+
+前端为中文管理后台，登录后（演示账号见第四节）可访问以下页面：
+
+| 路由 | 页面 | 主要能力 |
+| --- | --- | --- |
+| `/login` | 登录 | 账号口令登录；提供演示账号一键填充 |
+| `/dashboard` | 管理看板 | 总床位 / 空床 / 预占用 / 已入住 / 清洁中 / 维护中、占用率、隔离床资源、待入院队列优先级分布、分科室床位统计 |
+| `/admissions` | 住院证与预登记 | 住院证列表（按科室 / 状态 / 优先级 / 隔离筛选，按编号搜索）、开具住院证、开具草稿、取消、预入院登记（模拟预交金） |
+| `/recommendations` | 床位推荐 | 选待入院住院证 → 推荐候选床、综合得分、五项评分明细、理由与提醒；一键采纳首位或按床位预占用；无床位时展示原因与硬约束统计 |
+| `/beds` | 床位管理 | 多维护筛选（科室 / 病房 / 状态 / 床型 / 隔离 / 性别限制 / 关键字）、状态流水查看、管理员手工调状态、清洁完成释放床位 |
+| `/allocations` | 分配与住院办理 | 分配记录列表、新建预占用（采纳推荐 / 人工选床）、办理入住、办理出院、取消预占用 |
+| `/audit` | 操作审计 | 审计日志（按操作人 / 动作 / 对象 / 结果筛选）、详情展开（仅管理员） |
+| `/system-status` | 系统状态 | 前后端连通性与后端服务信息（`/health`、`/api/v1/system/info`） |
+
+页面只调用既有后端接口，**未改动任何核心业务规则、事务、状态机与数据库结构**；
+后端权限（角色）与硬约束在页面上同步体现（无权限的按钮不展示，越权由后端 403 兜底）。
+
+**接口能力不足时的处理**：不自行改造核心事务，改为在
+[docs/FRONTEND.md](docs/FRONTEND.md) 登记「接口缺口」，待核心规则确认后再最小化补齐。
 
 **浏览器验收项已通过**：用无头 Chrome 实际打开
 <http://127.0.0.1:5173/> 与 <http://127.0.0.1:5173/system-status>，
@@ -210,6 +227,8 @@ python -m pytest -q
 | [docs/recommendation-algorithm.md](docs/recommendation-algorithm.md) | 推荐算法：硬约束 + 可解释软约束评分 |
 | [docs/isolation-bed-policy.md](docs/isolation-bed-policy.md) | 隔离床使用策略（显式文档化） |
 | [docs/m0-checklist.md](docs/m0-checklist.md) | M0 交付项与验收结果 |
+| [docs/FRONTEND.md](docs/FRONTEND.md) | 前端页面清单、调用契约与接口缺口登记 |
+| [CORE_COMPARISON.md](CORE_COMPARISON.md) | ChatGPT P0 核心包与现有项目的差异对比（含待确认决策点） |
 
 ## 八、接口一览
 

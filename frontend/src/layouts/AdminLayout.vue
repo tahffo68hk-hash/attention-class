@@ -1,18 +1,38 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { computed, ref } from 'vue'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+
+import { useAuth } from '@/stores/auth'
 
 const route = useRoute()
+const router = useRouter()
+const { currentUser, signOut } = useAuth()
 
 const navItems = [
-  { name: 'home', path: '/', label: '项目首页' },
+  { name: 'dashboard', path: '/dashboard', label: '管理看板' },
+  { name: 'admissions', path: '/admissions', label: '住院证与预登记' },
+  { name: 'recommendations', path: '/recommendations', label: '床位推荐' },
+  { name: 'beds', path: '/beds', label: '床位管理' },
+  { name: 'allocations', path: '/allocations', label: '分配与住院办理' },
+  { name: 'audit', path: '/audit', label: '操作审计' },
   { name: 'system-status', path: '/system-status', label: '系统状态' },
 ]
 
 const activePath = computed(() => route.path)
-
 const envLabel = computed(() => (import.meta.env.DEV ? '开发环境' : '构建产物'))
 const apiBase = computed(() => import.meta.env.VITE_API_BASE_URL || '（经 Vite 代理转发到后端）')
+
+const signingOut = ref(false)
+
+async function onSignOut() {
+  signingOut.value = true
+  try {
+    await signOut()
+    await router.replace({ name: 'login' })
+  } finally {
+    signingOut.value = false
+  }
+}
 </script>
 
 <template>
@@ -42,6 +62,19 @@ const apiBase = computed(() => import.meta.env.VITE_API_BASE_URL || '（经 Vite
     </aside>
 
     <main class="content">
+      <div class="topbar">
+        <span class="topbar__user">
+          <template v-if="currentUser">
+            {{ currentUser.full_name }}
+            <span class="badge badge--info">{{ currentUser.role_label || currentUser.role }}</span>
+          </template>
+          <template v-else>未登录</template>
+        </span>
+        <button class="btn btn--sm" :disabled="signingOut" @click="onSignOut">
+          退出登录
+        </button>
+      </div>
+
       <RouterView />
       <p class="note" style="margin-top: 24px">
         接口基地址：{{ apiBase }} · 后端 API 文档：<a href="/docs" target="_blank" rel="noreferrer"
@@ -51,3 +84,21 @@ const apiBase = computed(() => import.meta.env.VITE_API_BASE_URL || '（经 Vite
     </main>
   </div>
 </template>
+
+<style scoped>
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.topbar__user {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+</style>
