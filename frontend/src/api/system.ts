@@ -17,8 +17,8 @@ export async function fetchHealth(): Promise<HealthResponse> {
   return data
 }
 
-/** 服务信息。 */
+/** 服务信息（走 /api 前缀，经 Vite 代理转发到后端）。 */
 export async function fetchServiceInfo(): Promise<ServiceInfo> {
-  const { data } = await http.get<ServiceInfo>('/')
+  const { data } = await http.get<ServiceInfo>('/api/v1/system/info')
   return data
 }

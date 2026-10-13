@@ -112,10 +112,11 @@ npm run dev
 ```
 
 * 管理后台首页：<http://127.0.0.1:5173/>
-* 系统状态页：<http://127.0.0.1:5173/system-status>（调用后端 `/health` 验证连通性）
+* 系统状态页：<http://127.0.0.1:5173/system-status>（调用后端 `/health` 与 `/api/v1/system/info` 验证连通性）
+* 接口文档：<http://127.0.0.1:5173/docs>（经代理直达后端 Swagger）
 
-开发服务器已在 `vite.config.ts` 中把 `/api` 与 `/health` 代理到 `127.0.0.1:8000`，
-无需额外处理跨域。
+开发服务器已在 `vite.config.ts` 中把 `/api`、`/health`、`/docs`、`/redoc`、`/openapi.json`
+代理到 `127.0.0.1:8000`，无需额外处理跨域。
 
 ### 4. 一键启动（Docker Compose，可选）
 
@@ -166,7 +167,12 @@ docker compose exec backend python seed.py     # 写入演示数据
 
 前端管理后台（`npm run dev`）当前提供项目首页与系统状态页；
 业务页面（看板、床位列表、住院证、推荐结果、分配记录）已具备完整后端接口，
-前端页面在后续迭代中补充。**浏览器验收项**（首页加载 + 调用 `/health` 成功）已通过。
+前端页面在后续迭代中补充。
+
+**浏览器验收项已通过**：用无头 Chrome 实际打开
+<http://127.0.0.1:5173/> 与 <http://127.0.0.1:5173/system-status>，
+页面正常渲染，系统状态页显示「后端服务：连通」并回显后端服务信息，控制台无报错。
+截图见 `docs/screenshots/`。
 
 ## 六、测试
 
@@ -209,6 +215,7 @@ python -m pytest -q
 
 | 分组 | 主要端点 |
 | --- | --- |
+| 系统 | `GET /system/info`、`GET /system/health`（另有无前缀的 `/health`） |
 | 认证 | `POST /auth/login`、`GET /auth/me`、`POST /auth/logout` |
 | 基础数据 | `/departments`、`/wards`、`/beds`、`/patients`、`/doctors` |
 | 住院证 | `POST/GET /admission-requests`、`/{id}/issue`、`/{id}/cancel`、`/{id}/preadmission` |

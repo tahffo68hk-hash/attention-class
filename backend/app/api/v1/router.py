@@ -13,9 +13,11 @@ from app.api.v1 import (
     dashboard,
     queue,
     recommendations,
+    system,
 )
 
 api_router = APIRouter()
+api_router.include_router(system.router)
 api_router.include_router(auth.router)
 api_router.include_router(admissions.router)
 api_router.include_router(recommendations.router)

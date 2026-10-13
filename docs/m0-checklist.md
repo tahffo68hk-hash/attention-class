@@ -34,8 +34,11 @@ GET http://127.0.0.1:8000/openapi.json -> 200（30 条路径）
 ### 2. 前端启动与页面访问
 
 ```
-GET http://127.0.0.1:5173/        ->  200，HTML 含中文标题「医院床位智能分配与住院入院预办理系统」
-GET http://127.0.0.1:5173/health  ->  200 {"status":"ok"}   # 经 Vite 代理调用后端健康接口
+GET http://127.0.0.1:5173/                    ->  200，HTML 含中文标题
+GET http://127.0.0.1:5173/health              ->  200 {"status":"ok"}          # 经 Vite 代理调后端健康接口
+GET http://127.0.0.1:5173/api/v1/system/info  ->  200 {"name":"…","version":"0.1.0",
+                                                     "docs":"/docs","api_prefix":"/api/v1"}
+GET http://127.0.0.1:5173/docs                ->  200（Swagger UI，经代理转发到后端）
 ```
 
 前端构建（类型检查 + 打包）通过：
@@ -46,8 +49,19 @@ GET http://127.0.0.1:5173/health  ->  200 {"status":"ok"}   # 经 Vite 代理调
 dist/index.html                    0.41 kB
 dist/assets/index-*.css            3.25 kB
 dist/assets/index-*.js            94.03 kB
-✓ built in 941ms
+✓ built in 983ms
 ```
+
+**真实浏览器验收（agent-browser + 无头 Chrome，2026-10-13）**
+
+| 步骤 | 结果 |
+| --- | --- |
+| 打开 `http://127.0.0.1:5173/` | 标题「项目首页 · 医院床位智能分配与住院入院预办理系统」，导航与正文正常渲染 |
+| 进入「系统状态」页 | 页面显示 **前端：运行中** / **后端服务：连通**（绿），证明前端**确实调到了后端** |
+| 服务信息卡 | 正确显示 服务名称 / 版本 `0.1.0` / API 前缀 `/api/v1` / 接口文档 `/docs` |
+| 浏览器控制台 | 无 error，仅 Vite HMR 的 debug 日志 |
+| 打开 `http://127.0.0.1:8000/docs` | Swagger UI 正常加载 |
+| 截图产物 | `docs/screenshots/{home,system-status,backend-docs}.png` |
 
 ### 3. 数据库迁移
 
@@ -86,6 +100,9 @@ INFO [alembic.runtime.migration] Running upgrade  -> 573c803013d2, init schema
 | 3 | `auth` 路由未挂载到 `api_router` | 登录接口 **404** | 补充 `include_router(auth.router)` |
 | 4 | 预入院请求体重复要求 `admission_request_id` | 走 URL 路径调用时 **422** | 请求体中该字段改为可选 |
 | 5 | 分配时先判硬约束再判状态 | 抢占已占用床位返回 422 而非 409 | 调整为先判状态（409）再判其它硬约束（422） |
+| 6 | 前端服务信息请求 `/`，但 Vite 只代理 `/api` 与 `/health` | 「后端服务信息」四项**全为空白**（`/` 落到前端 dev server 返回 HTML，字段为 `undefined`） | 新增后端 `/api/v1/system/info`，前端改调该路径；并把 `/docs`、`/redoc`、`/openapi.json` 一并加入 Vite 代理 |
+
+> 缺陷 6 是**真实浏览器验收**才暴露的：HTTP 层看到页面 200 看不出问题，浏览器里才看到值缺失。
 
 ## 四、环境阻塞与说明
 
