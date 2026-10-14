@@ -23,7 +23,7 @@ from app.schemas.allocation import (
 )
 from app.schemas.common import Page
 from app.services import allocation as allocation_service
-from app.services.serializers import allocation_read
+from app.services.serializers import UNKNOWN_OPERATOR, allocation_read
 
 router = APIRouter(prefix="/allocations", tags=["床位分配"])
 
@@ -222,7 +222,13 @@ def release(
     summary="床位状态流水（每次状态变化都留痕）",
 )
 def bed_status_logs(bed_id: int, db: DbSession, user: CurrentUser, limit: int = Query(50, ge=1, le=200)):
-    # 直接关联床位与操作者，修复 G1：原 API 总是返回 null。
+    # G1：床号与操作人取自真实关联字段（bed.code / users.full_name），不再硬编码 null。
+    # 历史数据若操作人缺失，明确标注「未记录（历史）」，绝不推测为系统操作。
+    from app.core.errors import NotFoundError
+
+    if db.get(Bed, bed_id) is None:
+        raise NotFoundError(f"床位 #{bed_id} 不存在")
+    # LEFT JOIN 操作者，保留无操作者的旧流水。
     rows = db.execute(
         select(BedStatusLog, Bed.code, User.full_name)
         .join(Bed, Bed.id == BedStatusLog.bed_id)
@@ -241,7 +247,7 @@ def bed_status_logs(bed_id: int, db: DbSession, user: CurrentUser, limit: int = 
             reason=log.reason,
             allocation_id=log.allocation_id,
             admission_request_id=log.admission_request_id,
-            operator_name=operator_name or "系统操作",
+            operator_name=operator_name if operator_name is not None else UNKNOWN_OPERATOR,
             created_at=log.created_at,
         )
         for log, bed_code, operator_name in rows

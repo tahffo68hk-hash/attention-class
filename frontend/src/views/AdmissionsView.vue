@@ -487,11 +487,12 @@ function fmt(value: string | null | undefined) {
       <div class="field">
         <label>开具医生</label>
         <select v-model="createForm.doctor_id" class="select">
-          <option value="">（默认当前登录医生）</option>
+          <option value="">（当前登录医生，需账号已关联医生档案）</option>
           <option v-for="d in doctors" :key="d.id" :value="d.id">
             {{ d.name }}{{ d.department_name ? `（${d.department_name}）` : '' }}
           </option>
         </select>
+        <p class="note">管理员等未关联医生档案的账号，必须在此显式选择开具医生。</p>
       </div>
       <div class="field">
         <label>病情优先级 *</label>

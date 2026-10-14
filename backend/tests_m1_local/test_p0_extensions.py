@@ -88,7 +88,9 @@ def test_audit_time_window(data):
 
 def test_audit_invalid_window(data):
     db,_,_=data
-    from fastapi import HTTPException
-    with pytest.raises(HTTPException) as exc:
+    # 项目统一错误契约（{code,message,detail,request_id}）要求抛 BizError，而非 FastAPI HTTPException。
+    from app.core.errors import BizError, ErrorCode
+    with pytest.raises(BizError) as exc:
         list_audit_logs(db,start_at=datetime.now(),end_at=datetime.now()-timedelta(days=1),page=1,page_size=50)
     assert exc.value.status_code==422
+    assert exc.value.code==ErrorCode.VALIDATION_ERROR

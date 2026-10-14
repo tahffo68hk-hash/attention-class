@@ -109,6 +109,18 @@ async function runExplainPlan() {
   }
 }
 
+/** 求解器标识 -> 中文标签。`solver=auto` 后端固定使用精确最小费用流（不调用可选 CP-SAT）。 */
+const SOLVER_LABEL: Record<string, string> = {
+  exact_min_cost_flow: '精确最小费用流',
+  ortools_cp_sat: 'OR-Tools CP-SAT',
+  greedy: '贪心回填（不保证最优）',
+}
+
+function solverLabel(method: string | undefined | null): string {
+  if (!method) return '未知'
+  return SOLVER_LABEL[method] ?? method
+}
+
 /** 逐项对照：同一住院证在贪心方案与全局方案下分别匹配到哪张床。 */
 const pairRows = computed(() => {
   if (!preview.value) return []
@@ -225,7 +237,9 @@ onMounted(load)
     </div>
 
     <div class="alert alert--info">
-      求解器：{{ preview.optimized.method }} ·
+      对照算法：贪心（{{ solverLabel(preview.baseline.method) }}） vs 全局优化（{{
+        solverLabel(preview.optimized.method)
+      }}）·
       {{ preview.optimized.proven_optimal ? '当前冻结候选下已证明最优' : '未证明最优' }} ·
       净增可安排 {{ preview.admitted_gain }} 人 · 适配评分总和差
       {{ Number(preview.score_gain).toFixed(2) }}。

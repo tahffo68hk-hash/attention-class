@@ -9,7 +9,7 @@
 - 只接受真实存在且处于 `PRE_ADMITTED`、已预登记、没有活动分配的住院证；不容许重复 ID。
 - **候选来源**：直接复用现有 `recommend_beds()`；它先用 H1–H4 硬约束过滤，再返回五维原有评分。不能绕过隔离策略，也不会自行更改其公式。
 - 安全上限：每批 ≤30 个申请、≤100 张不同床位、≤2000 条匹配边，单一申请候选 ≤100；超过则拒绝。
-- 两种对照：`greedy`（先优先级再住院证 ID；床位按最高分）与 `exact_min_cost_flow`（整数最小费用流）；安装可选 OR-Tools 后 `auto` 可选 `ortools_cp_sat`，只接受已证明 `OPTIMAL` 的结果，超时/未安装回退到精确流法。显式 `cp_sat` 请求若不能证明最优则报错。
+- 两种对照：`greedy`（先优先级再住院证 ID；床位按最高分）与 `exact_min_cost_flow`（整数最小费用流，**精确算法而非启发式**）。`solver=auto` / `solver=flow` **一律**使用该精确流算法，返回 `method="exact_min_cost_flow"` 且 `proven_optimal=true`，不会因是否安装 OR-Tools 而改变耗时或结果。仅显式 `solver=cp_sat` 才会调用可选 `ortools_cp_sat`（本机未安装 OR-Tools，该分支不可用）：它必须求得 `OPTIMAL`，否则**显式报错**，不做静默回退。
 
 ### 目标函数（先后顺序，严格字典序）
 

@@ -39,12 +39,13 @@ const GENDER_LIMIT_OPTIONS = [
   { value: 'ANY', label: '不限' },
 ]
 
-/** 与后端 BED_STATUS_TRANSITIONS 保持一致（仅用于 UI 下拉；后端仍会校验）。 */
-const TRANSITIONS: Record<string, string[]> = {
-  AVAILABLE: ['RESERVED', 'MAINTENANCE'],
-  RESERVED: ['OCCUPIED', 'AVAILABLE'],
-  OCCUPIED: ['CLEANING'],
-  CLEANING: ['AVAILABLE', 'MAINTENANCE'],
+/**
+ * 手工调状态只允许「维护 / 恢复维护」两类转移（与后端 P3 保护一致）。
+ * 预占、入住、取消、出院、清洁释放都必须走各自业务入口，不能在这里绕过
+ * 分配记录、审计与清洁锚点。后端对越权转移一律返回 409。
+ */
+const MANUAL_TRANSITIONS: Record<string, string[]> = {
+  AVAILABLE: ['MAINTENANCE'],
   MAINTENANCE: ['AVAILABLE'],
 }
 
@@ -168,12 +169,12 @@ const statusError = ref('')
 
 const allowedTransitions = computed(() => {
   const from = statusBed.value?.status ?? ''
-  return TRANSITIONS[from] ?? []
+  return MANUAL_TRANSITIONS[from] ?? []
 })
 
 function openStatus(bed: BedRead) {
   statusBed.value = bed
-  statusForm.status = (TRANSITIONS[bed.status] ?? [])[0] ?? ''
+  statusForm.status = (MANUAL_TRANSITIONS[bed.status] ?? [])[0] ?? ''
   statusForm.reason = ''
   statusError.value = ''
   statusOpen.value = true
@@ -330,11 +331,11 @@ function statusLabelOf(v: string) {
           <td style="white-space: nowrap">
             <button class="btn btn--sm" @click="openLogs(bed)">流水</button>
             <button
-              v-if="canOperateAllocation"
+              v-if="canOperateAllocation && (MANUAL_TRANSITIONS[bed.status]?.length ?? 0) > 0"
               class="btn btn--sm"
               @click="openStatus(bed)"
             >
-              调状态
+              维护/恢复
             </button>
             <button
               v-if="canOperateAllocation && bed.status === 'CLEANING'"
@@ -365,6 +366,7 @@ function statusLabelOf(v: string) {
           <th>时间</th>
           <th>变更</th>
           <th>原因</th>
+          <th>操作人</th>
           <th>关联分配</th>
         </tr>
       </thead>
@@ -377,33 +379,37 @@ function statusLabelOf(v: string) {
             <strong>{{ statusLabelOf(log.to_status) }}</strong>
           </td>
           <td>{{ log.reason || '—' }}</td>
+          <td>{{ log.operator_name || '未知' }}</td>
           <td>{{ log.allocation_id ? `#${log.allocation_id}` : '—' }}</td>
         </tr>
         <tr v-if="!logs.length">
-          <td colspan="4" class="empty">暂无状态流水</td>
+          <td colspan="5" class="empty">暂无状态流水</td>
         </tr>
       </tbody>
     </table>
   </Modal>
 
-  <!-- 手工调状态 -->
-  <Modal :open="statusOpen" :title="`调整床位状态 · ${statusBed?.code ?? ''}`" @close="statusOpen = false">
+  <!-- 手工调状态（仅维护 / 恢复维护） -->
+  <Modal :open="statusOpen" :title="`床位维护状态 · ${statusBed?.code ?? ''}`" @close="statusOpen = false">
     <div v-if="statusError" class="alert alert--danger">{{ statusError }}</div>
     <div class="field">
       <label>当前状态</label>
       <div><StatusBadge kind="bed" :value="statusBed?.status ?? ''" :label="statusBed?.status_label" /></div>
     </div>
     <div class="field">
-      <label>目标状态（仅列出合法流转）</label>
+      <label>目标状态</label>
       <select v-model="statusForm.status" class="select">
         <option v-for="s in allowedTransitions" :key="s" :value="s">{{ statusLabelOf(s) }}</option>
       </select>
     </div>
     <div class="field">
       <label>调整说明（可选）</label>
-      <input v-model.trim="statusForm.reason" class="input" placeholder="如：设备保养 / 消毒完成" />
+      <input v-model.trim="statusForm.reason" class="input" placeholder="如：设备保养 / 检修完成" />
     </div>
-    <p class="note">状态流转受后端状态机约束，非法流转会返回 409。</p>
+    <p class="note">
+      手工调状态只支持「空闲 ⇄ 维护中」。预占用、入住、出院、取消预占与清洁释放必须使用
+      各自的业务入口（分配与住院办理 / 释放），后端会拒绝绕过流程的手工修改并返回 409。
+    </p>
     <template #footer>
       <button class="btn" @click="statusOpen = false">取消</button>
       <button class="btn btn--primary" :disabled="statusBusy || !statusForm.status" @click="submitStatus">

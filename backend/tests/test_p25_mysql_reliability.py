@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import BizError
 from app.db.session import get_engine, get_session_factory
-from app.models.allocation import BedAllocation
+from app.models.allocation import AllocationIdempotency, BedAllocation, BedStatusLog
 from app.models.enums import AllocationMode, AllocationStatus, BedStatus
 from app.models.facility import Bed
 from app.models.user import User
@@ -89,3 +89,80 @@ def test_mysql_generated_unique_active_request_blocks_direct_duplicate_insert(cl
             db.rollback()
         assert db.scalar(select(func.count(BedAllocation.id)).where(
             BedAllocation.admission_request_id == req)) == 1
+
+
+def _snapshot():
+    with get_session_factory()() as db:
+        return (
+            db.scalar(select(func.count(BedAllocation.id))),
+            db.scalar(select(func.count(BedStatusLog.id))),
+            db.scalar(select(func.count(AllocationIdempotency.id))),
+        )
+
+
+def test_reassign_to_unavailable_target_rolls_back(client, ds, nurse_headers):
+    """原子换床失败回滚：目标床已被占用时必须 409，且原预占与流水完全不变。"""
+    assert get_engine().dialect.name == 'mysql'
+    req = make_request(ds, patient_name='男患者甲', department_code='CARD', seq=98)
+    other = make_request(ds, patient_name='男患者丙', department_code='CARD', seq=99)
+    source, target = ds.bed('C-W1-01'), ds.bed('C-W1-04')
+
+    created = client.post('/api/v1/allocations',
+                          json={'admission_request_id': req, 'bed_id': source},
+                          headers=nurse_headers)
+    assert created.status_code == 201, created.text
+    allocation_id = created.json()['id']
+    # 另一名患者先占住目标床
+    taken = client.post('/api/v1/allocations',
+                        json={'admission_request_id': other, 'bed_id': target},
+                        headers=nurse_headers)
+    assert taken.status_code == 201, taken.text
+
+    before = _snapshot()
+    moved = client.post(f'/api/v1/allocations/{allocation_id}/reassign',
+                        json={'new_bed_id': target, 'reason': '模拟失败换床'},
+                        headers=nurse_headers)
+    assert moved.status_code == 409, moved.text
+    assert moved.json()['code'] in ('BED_NOT_AVAILABLE', 'BED_DOUBLE_BOOKED'), moved.text
+
+    # 回滚验证：计数不变，原分配仍预占原床，两张床状态未被破坏
+    assert _snapshot() == before, '失败的换床不得留下任何写入'
+    with get_session_factory()() as db:
+        original = db.get(BedAllocation, allocation_id)
+        assert str(original.status) == AllocationStatus.RESERVED.value
+        assert original.active_bed_id == source and original.bed_id == source
+        assert original.cancel_reason is None
+        assert str(db.get(Bed, source).status) == BedStatus.RESERVED.value
+        assert str(db.get(Bed, target).status) == BedStatus.RESERVED.value
+        assert db.scalar(select(func.count(BedAllocation.id)).where(
+            BedAllocation.admission_request_id == req)) == 1
+
+
+def test_reassign_isolation_violation_rolls_back(client, ds, nurse_headers):
+    """原子换床失败回滚：目标床违反硬约束时必须 422，且不产生部分写入。"""
+    assert get_engine().dialect.name == 'mysql'
+    req = make_request(ds, patient_name='男患者甲', department_code='INF',
+                       isolation_required=True, seq=100)
+    source = ds.bed('I-W1-01')      # 隔离床
+    target = ds.bed('C-W1-01')      # 非隔离床，对本患者违反硬约束 H4
+
+    created = client.post('/api/v1/allocations',
+                          json={'admission_request_id': req, 'bed_id': source},
+                          headers=nurse_headers)
+    assert created.status_code == 201, created.text
+    allocation_id = created.json()['id']
+
+    before = _snapshot()
+    moved = client.post(f'/api/v1/allocations/{allocation_id}/reassign',
+                        json={'new_bed_id': target, 'reason': '模拟违规换床'},
+                        headers=nurse_headers)
+    assert moved.status_code == 422, moved.text
+    assert moved.json()['code'] == 'HARD_CONSTRAINT_VIOLATION', moved.text
+
+    assert _snapshot() == before, '违反硬约束的换床不得留下任何写入'
+    with get_session_factory()() as db:
+        original = db.get(BedAllocation, allocation_id)
+        assert str(original.status) == AllocationStatus.RESERVED.value
+        assert original.active_bed_id == source
+        assert str(db.get(Bed, source).status) == BedStatus.RESERVED.value
+        assert str(db.get(Bed, target).status) == BedStatus.AVAILABLE.value

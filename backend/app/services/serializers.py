@@ -37,6 +37,9 @@ DEPOSIT_STATUS_LABEL = {"PENDING": "待缴纳（模拟）", "PAID": "已缴纳�
 
 GENDER_LIMIT_LABEL = {"MALE": "仅限男性", "FEMALE": "仅限女性", "ANY": "不限性别"}
 
+# 历史票据的操作人缺失时的显式占位（G1）：不编造操作者，保证审计真实性。
+UNKNOWN_OPERATOR = "未记录（历史）"
+
 
 def user_read(user: User) -> UserRead:
     doctor = getattr(user, "doctor", None)
@@ -243,7 +246,11 @@ def allocation_read(
     )
 
 
-def bed_status_log_read(log: BedStatusLog, bed_code: str | None = None) -> BedStatusLogRead:
+def bed_status_log_read(
+    log: BedStatusLog,
+    bed_code: str | None = None,
+    operator_name: str | None = None,
+) -> BedStatusLogRead:
     return BedStatusLogRead(
         id=log.id,
         bed_id=log.bed_id,
@@ -253,7 +260,7 @@ def bed_status_log_read(log: BedStatusLog, bed_code: str | None = None) -> BedSt
         reason=log.reason,
         allocation_id=log.allocation_id,
         admission_request_id=log.admission_request_id,
-        operator_name=None,
+        operator_name=operator_name or UNKNOWN_OPERATOR,
         created_at=log.created_at,
     )
 

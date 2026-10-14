@@ -336,17 +336,36 @@ def set_bed_status(
     bed_id: int, payload: BedStatusUpdate, request: Request, db: DbSession, user: CurrentUser
 ):
     from app.services.allocation import _transition_bed  # 复用状态机与流水写入
+    from app.core.errors import StateTransitionError
+    from app.models.enums import AllocationStatus
 
-    bed = db.get(Bed, bed_id)
+    # 手工状态修改只允许维护类转移。RESERVED/OCCUPIED 相关的状态变更
+    # 必须通过 reserve/admit/discharge/cancel；清洁释放必须通过 release，
+    # 避免绕过分配记录、审计和清洁锚点检查。
+    manual_allowed = {
+        BedStatus.AVAILABLE.value: {BedStatus.MAINTENANCE.value},
+        BedStatus.MAINTENANCE.value: {BedStatus.AVAILABLE.value},
+    }
+    bed = db.execute(select(Bed).where(Bed.id == bed_id).with_for_update()).scalar_one_or_none()
     if bed is None:
         raise NotFoundError(f"床位 #{bed_id} 不存在")
-    allowed = BED_STATUS_TRANSITIONS.get(str(bed.status), set())
+    from_status = str(bed.status)
+    allowed = manual_allowed.get(from_status, set()) & BED_STATUS_TRANSITIONS.get(from_status, set())
     if payload.status not in allowed:
-        from app.core.errors import StateTransitionError
-
         raise StateTransitionError(
-            f"床位 {bed.code} 不允许从「{bed.status}」流转到「{payload.status}」",
-            detail={"bed_id": bed.id, "from": str(bed.status), "to": payload.status, "allowed": sorted(allowed)},
+            "该状态变化属于分配、入住、出院或清洁释放流程，不能直接手工修改",
+            detail={"bed_id": bed.id, "from": from_status, "to": payload.status, "allowed": sorted(allowed)},
+        )
+    active = db.execute(
+        select(BedAllocation.id).where(
+            BedAllocation.bed_id == bed.id,
+            BedAllocation.status.in_((AllocationStatus.RESERVED, AllocationStatus.ADMITTED)),
+        ).limit(1)
+    ).scalar_one_or_none()
+    if active is not None:
+        raise StateTransitionError(
+            "床位仍有关联的有效分配，必须先通过正式业务流程处理",
+            detail={"bed_id": bed.id, "allocation_id": active},
         )
     _transition_bed(
         db,
@@ -361,7 +380,7 @@ def set_bed_status(
         user=user,
         object_type="bed",
         object_id=bed.id,
-        detail={"from": str(bed.status), "to": payload.status, "reason": payload.reason},
+        detail={"from": from_status, "to": payload.status, "reason": payload.reason},
         ip=client_ip(request),
         user_agent=user_agent(request),
     )
