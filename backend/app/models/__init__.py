@@ -2,7 +2,7 @@
 
 from app.db.base import Base
 from app.models.admission import AdmissionRequest, Preadmission
-from app.models.allocation import BedAllocation, BedStatusLog
+from app.models.allocation import BedAllocation, BedStatusLog, AllocationIdempotency
 from app.models.audit import AuditLog
 from app.models.facility import Bed, Department, Ward
 from app.models.patient import Patient
@@ -20,5 +20,6 @@ __all__ = [
     "Preadmission",
     "BedAllocation",
     "BedStatusLog",
+    "AllocationIdempotency",
     "AuditLog",
 ]

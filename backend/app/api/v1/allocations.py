@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
@@ -18,6 +18,7 @@ from app.schemas.allocation import (
     BedStatusLogRead,
     CancelRequest,
     DischargeRequest,
+    ReassignRequest,
 )
 from app.schemas.common import Page
 from app.services import allocation as allocation_service
@@ -100,7 +101,8 @@ def get_allocation_detail(allocation_id: int, db: DbSession, user: CurrentUser):
     dependencies=[Depends(require_roles(*ALLOCATION_OPERATOR_ROLES))],
 )
 def create_allocation(
-    payload: AllocationCreate, request: Request, db: DbSession, user: CurrentUser
+    payload: AllocationCreate, request: Request, db: DbSession, user: CurrentUser,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key", min_length=8, max_length=128),
 ):
     alloc = allocation_service.reserve_bed(
         db,
@@ -109,8 +111,26 @@ def create_allocation(
         operator=user,
         confirm_top_recommendation=payload.confirm_top_recommendation,
         note=payload.note,
+        idempotency_key=idempotency_key,
         ip=client_ip(request),
         user_agent=user_agent(request),
+    )
+    return allocation_read(alloc)
+
+
+@router.post(
+    "/{allocation_id}/reassign",
+    response_model=AllocationRead,
+    status_code=201,
+    summary="原子人工换床（旧预占释放 + 新床预占，在同一事务）",
+    dependencies=[Depends(require_roles(*ALLOCATION_OPERATOR_ROLES))],
+)
+def reassign(
+    allocation_id: int, payload: ReassignRequest, request: Request, db: DbSession, user: CurrentUser
+):
+    alloc = allocation_service.reassign_reserved_bed(
+        db, allocation_id=allocation_id, new_bed_id=payload.new_bed_id,
+        reason=payload.reason, operator=user, ip=client_ip(request), user_agent=user_agent(request),
     )
     return allocation_read(alloc)
 

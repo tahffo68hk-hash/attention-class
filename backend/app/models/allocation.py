@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import (
     JSON,
     DateTime,
+    Computed,
     Enum as SAEnum,
     ForeignKey,
     Index,
@@ -52,6 +53,18 @@ class BedAllocation(Base, TimestampMixin):
     )
     active_bed_id: Mapped[int | None] = mapped_column(
         Integer, nullable=True, unique=True, comment="活动占用标记（并发保护）"
+    )
+    # Generated from status: cannot be bypassed by forgetting to clear an application flag.
+    active_request_id: Mapped[int | None] = mapped_column(
+        Integer,
+        Computed(
+            "CASE WHEN status IN ('RESERVED', 'ADMITTED') "
+            "THEN admission_request_id ELSE NULL END",
+            persisted=True,
+        ),
+        nullable=True,
+        unique=True,
+        comment="有效分配的住院证 ID：DB 保证单申请至多占一床",
     )
     mode: Mapped[AllocationMode] = mapped_column(
         SAEnum(AllocationMode, name="allocation_mode"),
@@ -119,3 +132,17 @@ class BedStatusLog(Base, TimestampMixin):
         Index("ix_bed_status_logs_bed_time", "bed_id", "created_at"),
         {"comment": "床位状态流水表"},
     )
+
+
+class AllocationIdempotency(Base, TimestampMixin):
+    """POST /allocations request identity, atomically committed with its result."""
+
+    __tablename__ = "allocation_idempotency"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    request_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    allocation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bed_allocations.id", ondelete="RESTRICT"), nullable=True
+    )
+    allocation: Mapped["BedAllocation | None"] = relationship()

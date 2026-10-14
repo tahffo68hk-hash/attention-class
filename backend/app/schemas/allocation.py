@@ -65,3 +65,8 @@ class BedStatusLogRead(ORMModel):
     admission_request_id: int | None = None
     operator_name: str | None = None
     created_at: datetime | None = None
+
+
+class ReassignRequest(BaseModel):
+    new_bed_id: int = Field(gt=0)
+    reason: str = Field(min_length=1, max_length=255)

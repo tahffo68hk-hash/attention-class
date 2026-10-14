@@ -76,6 +76,7 @@ def prepare_schema():
 
 TABLES = [
     "bed_status_logs",
+    "allocation_idempotency",
     "bed_allocations",
     "preadmissions",
     "admission_requests",

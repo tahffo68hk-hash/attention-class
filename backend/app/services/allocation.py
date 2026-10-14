@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+import hashlib
+import json
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -26,7 +28,7 @@ from app.core.errors import (
     StateTransitionError,
 )
 from app.models.admission import AdmissionRequest
-from app.models.allocation import BedAllocation, BedStatusLog
+from app.models.allocation import BedAllocation, BedStatusLog, AllocationIdempotency
 from app.models.enums import (
     ADMISSION_REQUEST_STATUS_LABEL,
     ADMISSION_REQUEST_TRANSITIONS,
@@ -78,7 +80,7 @@ def _transition_bed(
             bed_id=bed.id,
             from_status=from_status,
             to_status=to_status.value,
-            reason=reason,
+            reason=reason[:255],
             allocation_id=allocation_id,
             admission_request_id=admission_request_id,
             operator_id=getattr(operator, "id", None),
@@ -143,6 +145,88 @@ def get_bed(db: Session, bed_id: int) -> Bed:
     return bed
 
 
+
+def _fingerprint_reservation(request_id: int, bed_id: int | None, confirm: bool, note: str | None) -> str:
+    """Hash all behavior-affecting arguments; same key + different body must be rejected."""
+    canonical = json.dumps(
+        {"request_id": request_id, "bed_id": bed_id,
+         "confirm_top_recommendation": confirm, "note": note},
+        sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _replay_idempotency(db: Session, key: str, digest: str) -> BedAllocation:
+    record = db.execute(
+        select(AllocationIdempotency).where(AllocationIdempotency.request_key == key)
+    ).scalar_one_or_none()
+    if record is None:
+        raise ConflictError(ErrorCode.DUPLICATE_RESOURCE, "幂等写入冲突，请重试")
+    if record.payload_sha256 != digest:
+        raise ConflictError(
+            ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+            "相同 Idempotency-Key 已用于不同请求参数",
+        )
+    if record.allocation_id is None:
+        raise ConflictError(ErrorCode.DUPLICATE_RESOURCE, "首次操作尚未完成，请稍后重试")
+    return get_allocation(db, record.allocation_id)
+
+
+def _reserve_idempotency(db: Session, key: str, digest: str) -> tuple[AllocationIdempotency | None, BedAllocation | None]:
+    if not 8 <= len(key) <= 128 or not key.isascii() or any(ord(x) < 33 or ord(x) > 126 for x in key):
+        raise BizError(ErrorCode.VALIDATION_ERROR, "无效 Idempotency-Key", 422)
+    # A fast replay path and a unique-insert race gate. InnoDB unique-index
+    # insertion blocks the second in-flight writer until the first commits.
+    previous = db.execute(
+        select(AllocationIdempotency).where(AllocationIdempotency.request_key == key)
+    ).scalar_one_or_none()
+    if previous is not None:
+        return None, _replay_idempotency(db, key, digest)
+    record = AllocationIdempotency(request_key=key, payload_sha256=digest)
+    db.add(record)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        # A competing identical request may have committed during the insert.
+        return None, _replay_idempotency(db, key, digest)
+    return record, None
+
+
+def _lock_request(db: Session, request_id: int) -> AdmissionRequest:
+    """Common lock first: admission request -> allocation -> bed(s)."""
+    row = db.execute(
+        select(AdmissionRequest).where(AdmissionRequest.id == request_id).with_for_update()
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError(f"住院证 #{request_id} 不存在")
+    return get_request(db, request_id)
+
+
+def _assert_pair(alloc: BedAllocation, bed: Bed, *, status: AllocationStatus, bed_status: BedStatus) -> None:
+    if str(alloc.status) != status.value or str(bed.status) != bed_status.value or alloc.active_bed_id != bed.id:
+        raise ConflictError(
+            ErrorCode.ILLEGAL_STATE_TRANSITION,
+            "床位状态与活动分配记录不一致，拒绝修改",
+            detail={"allocation_id": alloc.id, "bed_id": bed.id,
+                    "allocation_status": str(alloc.status), "bed_status": str(bed.status)},
+        )
+
+
+def _lock_alloc_and_request(db: Session, allocation_id: int) -> tuple[AdmissionRequest, BedAllocation]:
+    request_id = db.execute(
+        select(BedAllocation.admission_request_id).where(BedAllocation.id == allocation_id)
+    ).scalar_one_or_none()
+    if request_id is None:
+        raise NotFoundError(f"分配记录 #{allocation_id} 不存在")
+    request = _lock_request(db, request_id)
+    alloc = db.execute(
+        select(BedAllocation).where(BedAllocation.id == allocation_id).with_for_update()
+    ).scalar_one_or_none()
+    if alloc is None or alloc.admission_request_id != request.id:
+        raise NotFoundError(f"分配记录 #{allocation_id} 不存在")
+    return request, alloc
+
 def reserve_bed(
     db: Session,
     *,
@@ -151,71 +235,95 @@ def reserve_bed(
     operator: User | None,
     confirm_top_recommendation: bool = False,
     note: str | None = None,
+    idempotency_key: str | None = None,
     ip: str | None = None,
     user_agent: str | None = None,
 ) -> BedAllocation:
-    """预占用床位：硬约束校验 + 行级锁 + 事务提交。"""
-    request = get_request(db, request_id)
-
-    if str(request.status) not in {
-        AdmissionRequestStatus.PRE_ADMITTED.value,
-    }:
-        raise StateTransitionError(
-            f"住院证 {request.certificate_no} 当前状态为「"
-            f"{ADMISSION_REQUEST_STATUS_LABEL.get(str(request.status), str(request.status))}」，"
-            "只有完成预入院登记（待入院）的住院证才能分配床位",
-            detail={"admission_request_id": request.id, "status": str(request.status)},
-        )
-
-    score: float | None = None
-    score_detail: dict[str, Any] | None = None
-    reason_text = note or ""
-
-    if bed_id is None:
-        # 采纳推荐：先做一次无锁的推荐计算
-        rec = recommend_beds(db, request, limit=1)
-        if not rec.recommendations:
-            raise BizError(
-                ErrorCode.NO_BED_AVAILABLE,
-                "当前没有满足硬约束的可用床位，无法分配",
-                409,
-                detail={
-                    "admission_request_id": request.id,
-                    "reasons": rec.no_result_reasons,
-                    "hard_constraint_stats": rec.hard_constraint_stats.model_dump(),
-                },
+    """预占：先获取幂等键，再锁住院证、锁床位，双唯一约束兜底。"""
+    idem_record: AllocationIdempotency | None = None
+    digest = _fingerprint_reservation(request_id, bed_id, confirm_top_recommendation, note)
+    try:
+        if idempotency_key is not None:
+            idem_record, replayed = _reserve_idempotency(db, idempotency_key, digest)
+            if replayed is not None:
+                return replayed
+        request = _lock_request(db, request_id)
+        # A different key or no key must not allocate another bed to this request.
+        active = db.execute(
+            select(BedAllocation.id).where(
+                BedAllocation.admission_request_id == request_id,
+                BedAllocation.status.in_([AllocationStatus.RESERVED, AllocationStatus.ADMITTED]),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if active is not None:
+            raise ConflictError(
+                ErrorCode.REQUEST_ALREADY_ALLOCATED,
+                "同一住院证已有活动分配，不能再占用其他床位",
+                detail={"admission_request_id": request_id, "allocation_id": active},
             )
-        top = rec.recommendations[0]
-        bed_id = top.bed_id
-        score = top.score
-        score_detail = {
-            "items": [item.model_dump() for item in top.score_items],
-            "reasons": top.reasons,
-            "warnings": top.warnings,
-            "candidates_evaluated": rec.candidates_evaluated,
-        }
-        reason_text = reason_text or f"采纳推荐系统首选床位 {top.bed_code}（得分 {top.score}）"
-        mode = AllocationMode.RECOMMENDED
-    else:
-        mode = (
-            AllocationMode.RECOMMENDED if confirm_top_recommendation else AllocationMode.MANUAL
-        )
-        if confirm_top_recommendation:
-            rec = recommend_beds(db, request, limit=50)
-            matched = next((r for r in rec.recommendations if r.bed_id == bed_id), None)
-            if matched is not None:
-                score = matched.score
-                score_detail = {
-                    "items": [item.model_dump() for item in matched.score_items],
-                    "reasons": matched.reasons,
-                    "warnings": matched.warnings,
-                    "candidates_evaluated": rec.candidates_evaluated,
-                }
-                reason_text = reason_text or f"确认采纳推荐床位 {matched.bed_code}（得分 {matched.score}）"
-        if not reason_text:
-            reason_text = "人工选择床位（已通过硬约束校验）"
+    except Exception:
+        db.rollback()
+        raise
 
     try:
+        if str(request.status) not in {
+            AdmissionRequestStatus.PRE_ADMITTED.value,
+        }:
+            raise StateTransitionError(
+                f"住院证 {request.certificate_no} 当前状态为「"
+                f"{ADMISSION_REQUEST_STATUS_LABEL.get(str(request.status), str(request.status))}」，"
+                "只有完成预入院登记（待入院）的住院证才能分配床位",
+                detail={"admission_request_id": request.id, "status": str(request.status)},
+            )
+
+        score: float | None = None
+        score_detail: dict[str, Any] | None = None
+        reason_text = note or ""
+
+        if bed_id is None:
+            # 采纳推荐：先做一次无锁的推荐计算
+            rec = recommend_beds(db, request, limit=1)
+            if not rec.recommendations:
+                raise BizError(
+                    ErrorCode.NO_BED_AVAILABLE,
+                    "当前没有满足硬约束的可用床位，无法分配",
+                    409,
+                    detail={
+                        "admission_request_id": request.id,
+                        "reasons": rec.no_result_reasons,
+                        "hard_constraint_stats": rec.hard_constraint_stats.model_dump(),
+                    },
+                )
+            top = rec.recommendations[0]
+            bed_id = top.bed_id
+            score = top.score
+            score_detail = {
+                "items": [item.model_dump() for item in top.score_items],
+                "reasons": top.reasons,
+                "warnings": top.warnings,
+                "candidates_evaluated": rec.candidates_evaluated,
+            }
+            reason_text = reason_text or f"采纳推荐系统首选床位 {top.bed_code}（得分 {top.score}）"
+            mode = AllocationMode.RECOMMENDED
+        else:
+            mode = (
+                AllocationMode.RECOMMENDED if confirm_top_recommendation else AllocationMode.MANUAL
+            )
+            if confirm_top_recommendation:
+                rec = recommend_beds(db, request, limit=50)
+                matched = next((r for r in rec.recommendations if r.bed_id == bed_id), None)
+                if matched is not None:
+                    score = matched.score
+                    score_detail = {
+                        "items": [item.model_dump() for item in matched.score_items],
+                        "reasons": matched.reasons,
+                        "warnings": matched.warnings,
+                        "candidates_evaluated": rec.candidates_evaluated,
+                    }
+                    reason_text = reason_text or f"确认采纳推荐床位 {matched.bed_code}（得分 {matched.score}）"
+            if not reason_text:
+                reason_text = "人工选择床位（已通过硬约束校验）"
+
         # 悲观锁：锁定目标床位行，直到本事务结束
         locked = db.execute(
             select(Bed).where(Bed.id == bed_id).with_for_update()
@@ -261,7 +369,9 @@ def reserve_bed(
             reserved_at=_now(),
         )
         db.add(alloc)
-        db.flush()  # 取得 alloc.id，同时触发 active_bed_id 唯一索引校验
+        db.flush()  # triggers both unique constraints; alloc.id available
+        if idem_record is not None:
+            idem_record.allocation_id = alloc.id
 
         _transition_bed(
             db,
@@ -272,11 +382,6 @@ def reserve_bed(
             allocation_id=alloc.id,
             admission_request_id=request.id,
         )
-
-        # 该住院证不再参与待入院队列的其他占用
-        pre = request.preadmission
-        if pre is not None:
-            pre.queue_sequence = pre.queue_sequence
 
         record_audit(
             db,
@@ -303,8 +408,8 @@ def reserve_bed(
         db.rollback()
         raise ConflictError(
             ErrorCode.BED_DOUBLE_BOOKED,
-            "床位已被其他操作占用（数据库唯一约束拦截），请刷新后重试",
-            detail={"bed_id": bed_id, "db_error": str(exc.orig)[:200]},
+            "床位或住院证已有活动占用（数据库唯一约束拦截），请刷新后重试",
+            detail={"bed_id": bed_id, "admission_request_id": request_id},
         ) from exc
     except BizError:
         db.rollback()
@@ -315,6 +420,90 @@ def reserve_bed(
 
     return get_allocation(db, alloc.id)
 
+
+
+def reassign_reserved_bed(
+    db: Session,
+    *,
+    allocation_id: int,
+    new_bed_id: int,
+    reason: str,
+    operator: User | None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> BedAllocation:
+    """Atomically swap a RESERVED bed for another eligible AVAILABLE bed.
+
+    Lock order: request -> old allocation -> beds sorted by id. All writes
+    (old allocation cancellation, both bed states, new allocation and audit)
+    are committed together; uniqueness is maintained between FLUSH steps.
+    """
+    try:
+        request, old = _lock_alloc_and_request(db, allocation_id)
+        if str(old.status) != AllocationStatus.RESERVED.value:
+            raise StateTransitionError("仅预占用状态支持人工换床")
+        if str(request.status) != AdmissionRequestStatus.PRE_ADMITTED.value:
+            raise StateTransitionError("住院证状态不允许换床")
+        if new_bed_id == old.bed_id:
+            raise ConflictError(ErrorCode.DUPLICATE_RESOURCE, "新旧床位不能相同")
+
+        beds: dict[int, Bed] = {}
+        for identifier in sorted([old.bed_id, new_bed_id]):
+            bed = db.execute(
+                select(Bed).where(Bed.id == identifier).with_for_update()
+            ).scalar_one_or_none()
+            if bed is None:
+                raise NotFoundError(f"床位 #{identifier} 不存在")
+            beds[identifier] = bed
+        source, target = beds[old.bed_id], beds[new_bed_id]
+        _assert_pair(old, source, status=AllocationStatus.RESERVED, bed_status=BedStatus.RESERVED)
+        if str(target.status) != BedStatus.AVAILABLE.value:
+            raise ConflictError(ErrorCode.BED_NOT_AVAILABLE, "目标床位已被占用或不可用")
+        violations = bed_policy.hard_constraint_violations(
+            target, department_id=request.department_id,
+            patient_gender=str(request.patient.gender),
+            isolation_required=bool(request.isolation_required),
+        )
+        if violations:
+            raise BizError(ErrorCode.HARD_CONSTRAINT_VIOLATION,
+                           "目标床位不满足硬约束：" + "；".join(violations),
+                           422, detail={"violations": violations})
+
+        # First release the old assignment: the generated unique active_request_id
+        # is freed upon flush, then the new one may be inserted in this transaction.
+        old.status = AllocationStatus.CANCELLED
+        old.active_bed_id = None
+        old.cancel_reason = f"换床至 {target.code}：{reason}"[:255]
+        _transition_bed(db, source, BedStatus.AVAILABLE,
+                        reason=f"人工换床释放原床：{reason}", operator=operator,
+                        allocation_id=old.id, admission_request_id=request.id)
+        db.flush()
+
+        new = BedAllocation(
+            admission_request_id=request.id, patient_id=request.patient_id,
+            bed_id=target.id, active_bed_id=target.id,
+            mode=AllocationMode.MANUAL, status=AllocationStatus.RESERVED,
+            operator_id=getattr(operator, "id", None),
+            reserved_at=_now(), reason=f"由床位 {source.code} 人工调整：{reason}",
+        )
+        db.add(new)
+        db.flush()
+        _transition_bed(db, target, BedStatus.RESERVED,
+                        reason=f"人工换床从 {source.code} 转入：{reason}", operator=operator,
+                        allocation_id=new.id, admission_request_id=request.id)
+        record_audit(db, action="REASSIGN_BED", user=operator,
+                     object_type="bed_allocation", object_id=new.id,
+                     detail={"old_allocation_id": old.id, "old_bed_id": source.id,
+                             "new_allocation_id": new.id, "new_bed_id": target.id,
+                             "reason": reason}, ip=ip, user_agent=user_agent)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ConflictError(ErrorCode.BED_DOUBLE_BOOKED, "换床目标已发生并发占用") from exc
+    except Exception:
+        db.rollback()
+        raise
+    return get_allocation(db, new.id)
 
 def get_allocation(db: Session, allocation_id: int) -> BedAllocation:
     alloc = db.execute(
@@ -342,19 +531,13 @@ def admit_patient(
 ) -> BedAllocation:
     """确认入住：预占用 -> 已入住。"""
     try:
-        alloc = db.execute(
-            select(BedAllocation).where(BedAllocation.id == allocation_id).with_for_update()
-        ).scalar_one_or_none()
-        if alloc is None:
-            raise NotFoundError(f"分配记录 #{allocation_id} 不存在")
+        request, alloc = _lock_alloc_and_request(db, allocation_id)
 
         assert_allocation_transition(alloc, AllocationStatus.ADMITTED)
 
         bed = db.execute(select(Bed).where(Bed.id == alloc.bed_id).with_for_update()).scalar_one()
-        request = db.execute(
-            select(AdmissionRequest).where(AdmissionRequest.id == alloc.admission_request_id)
-        ).scalar_one()
 
+        _assert_pair(alloc, bed, status=AllocationStatus.RESERVED, bed_status=BedStatus.RESERVED)
         _transition_bed(
             db,
             bed,
@@ -407,19 +590,13 @@ def discharge_patient(
 ) -> BedAllocation:
     """办理出院：已入住 -> 已出院，床位进入清洁中。"""
     try:
-        alloc = db.execute(
-            select(BedAllocation).where(BedAllocation.id == allocation_id).with_for_update()
-        ).scalar_one_or_none()
-        if alloc is None:
-            raise NotFoundError(f"分配记录 #{allocation_id} 不存在")
+        request, alloc = _lock_alloc_and_request(db, allocation_id)
 
         assert_allocation_transition(alloc, AllocationStatus.DISCHARGED)
 
         bed = db.execute(select(Bed).where(Bed.id == alloc.bed_id).with_for_update()).scalar_one()
-        request = db.execute(
-            select(AdmissionRequest).where(AdmissionRequest.id == alloc.admission_request_id)
-        ).scalar_one()
 
+        _assert_pair(alloc, bed, status=AllocationStatus.ADMITTED, bed_status=BedStatus.OCCUPIED)
         _transition_bed(
             db,
             bed,
@@ -528,15 +705,12 @@ def cancel_allocation(
 ) -> BedAllocation:
     """取消预占用：预占用 -> 已取消，床位回到空闲。"""
     try:
-        alloc = db.execute(
-            select(BedAllocation).where(BedAllocation.id == allocation_id).with_for_update()
-        ).scalar_one_or_none()
-        if alloc is None:
-            raise NotFoundError(f"分配记录 #{allocation_id} 不存在")
+        request, alloc = _lock_alloc_and_request(db, allocation_id)
 
         assert_allocation_transition(alloc, AllocationStatus.CANCELLED)
         bed = db.execute(select(Bed).where(Bed.id == alloc.bed_id).with_for_update()).scalar_one()
 
+        _assert_pair(alloc, bed, status=AllocationStatus.RESERVED, bed_status=BedStatus.RESERVED)
         _transition_bed(
             db,
             bed,
