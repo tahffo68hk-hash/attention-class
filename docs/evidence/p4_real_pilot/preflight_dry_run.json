@@ -1,0 +1,223 @@
+{
+  "generated_at": "2026-10-14T13:43:44.207971+08:00",
+  "pilot_id": "P4PILOT-20261014T134343+0800",
+  "real_network_requests": 0,
+  "budget_cny": 0.5,
+  "worst_case_total_cny": 0.012292,
+  "rates_cny_per_m": {
+    "miss": 2.0,
+    "hit": 0.04,
+    "out": 8.0
+  },
+  "items": [
+    {
+      "kind": "single",
+      "checks": [
+        [
+          "endpoint 固定",
+          true
+        ],
+        [
+          "model == deepseek-flash",
+          true
+        ],
+        [
+          "thinking 已禁用",
+          true
+        ],
+        [
+          "强制 JSON 输出",
+          true
+        ],
+        [
+          "stream == false",
+          true
+        ],
+        [
+          "max_tokens <= 500",
+          true
+        ],
+        [
+          "messages JSON <= 8KB",
+          true
+        ],
+        [
+          "Authorization 存在且不外泄",
+          true
+        ],
+        [
+          "白名单无识别信息",
+          true
+        ],
+        [
+          "系统提示要求输出 JSON",
+          true
+        ],
+        [
+          "用户消息即白名单快照",
+          true
+        ],
+        [
+          "MockTransport 解析成功",
+          true
+        ]
+      ],
+      "messages_bytes": 1169,
+      "whitelist": {
+        "kind": "bed_explanation",
+        "teaching_only": true,
+        "priority_rank": 2,
+        "requires_isolation": false,
+        "bed_type": "NORMAL",
+        "final_score": 88.24,
+        "warning_count": 0,
+        "score_dimensions": [
+          {
+            "key": "distance",
+            "raw_score": 75.74,
+            "contribution": 24.2381
+          },
+          {
+            "key": "priority_fit",
+            "raw_score": 100.0,
+            "contribution": 28.0
+          },
+          {
+            "key": "ward_balance",
+            "raw_score": 100.0,
+            "contribution": 18.0
+          },
+          {
+            "key": "cost",
+            "raw_score": 100.0,
+            "contribution": 12.0
+          },
+          {
+            "key": "preference",
+            "raw_score": 60.0,
+            "contribution": 6.0
+          }
+        ]
+      },
+      "whitelist_sha256": "1e52af013ae42083a47d4efd376a7dfa8305792cc5815dda03492c1328f073c0",
+      "worst_case_cny": 0.006338,
+      "meta": {
+        "source": "recommend_beds(limit=None) 的真实（虚构）评分结果",
+        "priority_rank": 2,
+        "candidate_count": 6,
+        "final_score": 88.24,
+        "dimensions": [
+          {
+            "key": "distance",
+            "raw_score": 75.74,
+            "contribution": 24.2381
+          },
+          {
+            "key": "priority_fit",
+            "raw_score": 100.0,
+            "contribution": 28.0
+          },
+          {
+            "key": "ward_balance",
+            "raw_score": 100.0,
+            "contribution": 18.0
+          },
+          {
+            "key": "cost",
+            "raw_score": 100.0,
+            "contribution": 12.0
+          },
+          {
+            "key": "preference",
+            "raw_score": 60.0,
+            "contribution": 6.0
+          }
+        ]
+      }
+    },
+    {
+      "kind": "plan",
+      "checks": [
+        [
+          "endpoint 固定",
+          true
+        ],
+        [
+          "model == deepseek-flash",
+          true
+        ],
+        [
+          "thinking 已禁用",
+          true
+        ],
+        [
+          "强制 JSON 输出",
+          true
+        ],
+        [
+          "stream == false",
+          true
+        ],
+        [
+          "max_tokens <= 500",
+          true
+        ],
+        [
+          "messages JSON <= 8KB",
+          true
+        ],
+        [
+          "Authorization 存在且不外泄",
+          true
+        ],
+        [
+          "白名单无识别信息",
+          true
+        ],
+        [
+          "系统提示要求输出 JSON",
+          true
+        ],
+        [
+          "用户消息即白名单快照",
+          true
+        ],
+        [
+          "MockTransport 解析成功",
+          true
+        ]
+      ],
+      "messages_bytes": 977,
+      "whitelist": {
+        "kind": "aggregate_bed_allocation_preview",
+        "teaching_only": true,
+        "request_count": 3,
+        "candidate_edges": 15,
+        "admitted_gain": 0,
+        "greedy": {
+          "admitted": 3,
+          "priority_sum": 8,
+          "score_sum": 235.07
+        },
+        "optimized": {
+          "admitted": 3,
+          "priority_sum": 8,
+          "score_sum": 235.07,
+          "method": "exact_min_cost_flow",
+          "proven_optimal": true
+        }
+      },
+      "whitelist_sha256": "845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a",
+      "worst_case_cny": 0.005954,
+      "meta": {
+        "source": "optimization_preview.preview(solver='auto') 的真实（合成）计算结果",
+        "request_count": 3,
+        "candidate_edges": 15,
+        "greedy_admitted": 3,
+        "optimized_admitted": 3,
+        "optimized_method": "exact_min_cost_flow",
+        "proven_optimal": true
+      }
+    }
+  ]
+}
