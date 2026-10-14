@@ -79,9 +79,10 @@ def sha256_text(text: str) -> str:
 # 持久计数（防重启 / 防重复点击突破上限）
 # --------------------------------------------------------------------------- #
 def load_state() -> dict:
+    """读取持久状态；**首次调用即落盘**，保证 Pilot ID 跨进程/重启稳定。"""
     if STATE_PATH.exists():
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    return {
+    state = {
         "pilot_id": "P4PILOT-" + datetime.now(CN).strftime("%Y%m%dT%H%M%S%z"),
         "created_at": datetime.now(CN).isoformat(),
         "authorized_max_requests": AUTHORIZED_MAX_REQUESTS,
@@ -90,6 +91,8 @@ def load_state() -> dict:
         "attempts": [],
         "cumulative_estimate_cny": 0.0,
     }
+    save_state(state)  # ← 立即持久化，避免每次运行重新生成 Pilot ID
+    return state
 
 
 def save_state(state: dict) -> None:

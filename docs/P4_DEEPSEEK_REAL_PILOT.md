@@ -4,8 +4,8 @@
 REAL_DEEPSEEK_PILOT = BLOCKED
 ```
 
-- **Pilot ID**：`P4PILOT-20261014T134307+0800`
-- **执行时间**：2026-10-14 13:42 – 13:45（GMT+8）
+- **Pilot ID**：`P4PILOT-20261014T140727+0800`（持久化于 `.workbuddy/p4_pilot_state.json`，随运行器首次运行生成一次）
+- **执行时间**：2026-10-14 13:42 – 14:10（GMT+8）
 - **基线 HEAD（执行前）**：`b3c2a97`
 - **真实 DeepSeek Chat Completions 请求数**：**0 / 授权 2**
 - **实际计费**：**¥0**（未发起任何请求）
@@ -73,13 +73,18 @@ REAL_DEEPSEEK_PILOT = BLOCKED
 
 ```json
 {
-  "pilot_id": "P4PILOT-20261014T134307+0800",
+  "pilot_id": "P4PILOT-20261014T140727+0800",
   "authorized_max_requests": 2,
   "authorized_budget_cny": 0.5,
   "attempts": [],
   "cumulative_estimate_cny": 0.0
 }
 ```
+
+> **修复记录（本轮）**：`load_state()` 原实现只在内存中生成 Pilot ID、**不落盘**，
+> 会导致每次运行生成新 ID（持久运行 ID 失效）。已改为**首次调用即 `save_state()` 落盘**，
+> 并经跨进程复读验证：连续两次 `--status` 返回同一 `pilot_id`。
+> 注：状态文件位于 gitignore 的 `.workbuddy/`，**每台机器独立**，不入库。
 
 `--execute` 闸门实测（无密钥时）：
 
@@ -96,7 +101,7 @@ EXIT=2      ← 未消耗任何额度、未发起任何网络请求
 为在不产生任何费用的前提下核验「最终外发 JSON」，彩排使用
 `httpx.MockTransport` 驱动**真实 Provider 代码**（`deepseek_provider.generate`），
 拦截全部网络流量。彩排结论：**24/24 项检查全部 PASS，真实网络请求 = 0**。
-完整输出见 `docs/evidence/p4_real_pilot/dry_run_console.log`。
+完整输出见 `docs/evidence/p4_real_pilot/dry_run_console.txt`（修复后重跑，24 项检查仍全 PASS）。
 
 ### 4.1 出站请求核验（两条路径一致）
 
@@ -166,7 +171,7 @@ SHA256：`845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a`
 
 | 字段 | 调用 #1（single） | 调用 #2（plan） |
 |---|---|---|
-| Pilot ID | `P4PILOT-20261014T134307+0800` | 同左 |
+| Pilot ID | `P4PILOT-20261014T140727+0800` | 同左 |
 | 时间 | —（未执行） | —（未执行） |
 | Endpoint / 模型 | `api.deepseek.com/chat/completions` / `deepseek-flash` | 同左 |
 | 功能类型 | single | plan |
@@ -239,9 +244,15 @@ SHA256：`845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a`
 ```
 b3c2a97  feat(p4): 集成 DeepSeek 可选真实 AI 解释（基线，执行前 HEAD）
 cddb9cd  chore(p4-pilot): 建立 DeepSeek 真实调用 Pilot 的有界运行器与离线证据（BLOCKED：本机未配置密钥）
+d8b64a0  docs(p4-pilot): 报告补充本轮引入提交号 cddb9cd
 ```
-`cddb9cd` 即为本报告、本轮证据与运行器的引入提交（5 files changed, +1165）。
-本地提交，**未执行 `git push`（NO PUSH）**：`git log origin/main..HEAD` 显示本地领先远程 2 个提交。
+
+- `cddb9cd` 引入本报告、证据目录与运行器（5 files changed, +1165）。
+- **本轮收尾修复**：`load_state()` 首次调用即落盘（Pilot ID 持久化）、
+  证据文件名 `dry_run_console.log` → `.txt`（原后缀命中 `.gitignore:13` 的 `*.log`，
+  **实际未入库**，报告引用因此失效，已修正）、彩排重跑刷新 `preflight_dry_run.json`。
+- 本地提交，**未执行 `git push`（NO PUSH）**：`git log origin/main..HEAD` 显示本地领先远程。
+  基线 `b3c2a97`（P4 集成）本身亦为 NO PUSH 提交。
 
 本次新增：
 - `scripts/p4_real_pilot.py`（有界运行器：持久计数 + 预算闸门 + 零网络彩排）

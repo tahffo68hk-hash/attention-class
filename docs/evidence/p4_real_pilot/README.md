@@ -1,14 +1,14 @@
 # P4 DeepSeek Real Provider Pilot — 本地证据目录
 
 对应报告：`docs/P4_DEEPSEEK_REAL_PILOT.md`
-Pilot ID：`P4PILOT-20261014T134307+0800`
+Pilot ID：`P4PILOT-20261014T140727+0800`
 
 ## 文件清单
 
 | 文件 | 内容 |
 |---|---|
 | `preflight_dry_run.json` | 零网络彩排的结构化结果：两类出站载荷、白名单、SHA256、字节大小、最坏情况费用 |
-| `dry_run_console.log` | 彩排控制台完整输出（24 项检查全 PASS） |
+| `dry_run_console.txt` | 彩排控制台完整输出（24 项检查全 PASS）。用 `.txt` 而非 `.log`，以避开 `.gitignore` 的 `*.log` 排除规则 |
 | `api_gate_checks.md` | API 级门禁与业务副作用核验的原始观测 |
 | `README.md` | 本索引 |
 
