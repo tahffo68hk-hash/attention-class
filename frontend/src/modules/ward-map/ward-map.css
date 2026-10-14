@@ -1,0 +1,909 @@
+/* =============================================================================
+ * 病区床位态势图（Ward Map V1 数据契约 + Hospital Vision V2 场景）
+ *
+ * 交付包自带硬编码色值 + 一份 .theme-dark 补丁；本仓库已有完整设计令牌体系
+ * （见 src/styles/main.css），因此此文件改为**全部走令牌**：
+ *  - 结构类名（wm-*）与布局规则保持不变，便于与交付包逐条对照；
+ *  - 颜色一律引用 --surface/--border/--muted/--color-text…，明暗主题自动跟随，
+ *    不再需要逐个组件写 theme-dark 覆盖；
+ *  - 控件复用本地 .btn 语义（.btn 次级 / .btn--primary 强调），不再另立一套按钮；
+ *  - Three.js 画布使用透明底，舞台底色由本文件的 --wm-stage-* 令牌给出，
+ *    因此 V2 的医院剖面在明暗两套主题下都被同一组令牌接管
+ *    （见 WardScene3D.vue 的 renderer alpha 与 toneMappingExposure）。
+ * ========================================================================== */
+
+.ward-map-page {
+  --wm-stroke: var(--border);
+  --wm-panel: var(--surface);
+  --wm-panel-2: var(--surface-2);
+  --wm-ink: var(--color-text);
+  --wm-ink-soft: var(--color-text-dim);
+  --wm-ink-faint: var(--muted);
+  --wm-total-bg: #16293f;
+  --wm-total-ink: #ffffff;
+  --wm-total-soft: #adc2d2;
+  --wm-stage-glow: rgba(255, 255, 255, 0.9);
+  --wm-stage-top: #f6fbfe;
+  --wm-stage-bottom: #e4eef5;
+
+  color: var(--wm-ink);
+  max-width: 1600px;
+  margin: auto;
+  min-width: 0;
+}
+
+html.theme-dark .ward-map-page {
+  --wm-total-bg: var(--surface-2);
+  --wm-total-ink: var(--color-text);
+  --wm-total-soft: var(--muted);
+}
+
+/* ------------------------------- 标题区 ------------------------------- */
+
+.wm-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.wm-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  color: var(--primary);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.wm-heading h1 {
+  font-size: 27px;
+  letter-spacing: -0.8px;
+  margin: 6px 0;
+  color: var(--wm-ink);
+}
+
+.wm-heading p {
+  font-size: 13px;
+  color: var(--wm-ink-faint);
+  margin: 0;
+}
+
+.wm-heading-actions {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ward-map-page a.btn,
+.modal__foot a.btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.wm-source {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--wm-ink-soft);
+  background: var(--wm-panel-2);
+  border: 1px solid var(--wm-stroke);
+  padding: 9px 11px;
+  border-radius: 9px;
+}
+
+.wm-source-dot {
+  height: 7px;
+  width: 7px;
+  border-radius: 100%;
+  background: var(--color-success);
+  flex: 0 0 auto;
+}
+
+.wm-note {
+  border: 1px solid var(--wm-stroke);
+  background: var(--wm-panel-2);
+  color: var(--wm-ink-soft);
+  padding: 11px 14px;
+  font-size: 11px;
+  border-radius: 10px;
+  margin-bottom: 18px;
+  line-height: 1.6;
+}
+
+.wm-note strong {
+  color: var(--primary);
+}
+
+/* ------------------------------ 加载 / 错误 ------------------------------ */
+
+.wm-loading,
+.wm-error,
+.wm-empty {
+  padding: 22px;
+  border-radius: 12px;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+.wm-loading {
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+
+.wm-error {
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  color: var(--color-danger);
+}
+
+.wm-error button {
+  margin-left: 8px;
+  color: inherit;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.wm-empty {
+  color: var(--wm-ink-faint);
+  text-align: center;
+  position: absolute;
+  top: 36%;
+  left: 0;
+  right: 0;
+}
+
+/* -------------------------------- 统计条 -------------------------------- */
+
+.wm-stats {
+  display: grid;
+  grid-template-columns: 1.12fr repeat(5, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.wm-total,
+.wm-stat {
+  border: 1px solid var(--wm-stroke);
+  border-radius: 11px;
+  background: var(--wm-panel);
+  padding: 15px 15px 12px;
+  text-align: left;
+  min-width: 0;
+  position: relative;
+}
+
+.wm-total {
+  background: var(--wm-total-bg);
+  color: var(--wm-total-ink);
+  border-color: var(--wm-total-bg);
+}
+
+.wm-total strong,
+.wm-stat strong {
+  display: block;
+  font-size: 29px;
+  line-height: 1.3;
+  margin: 5px 0 4px;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wm-total strong {
+  color: var(--wm-total-ink);
+}
+
+.wm-stat strong {
+  color: var(--wm-ink);
+}
+
+.wm-stat {
+  cursor: pointer;
+}
+
+.wm-stat:hover,
+.wm-stat.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-subtle);
+}
+
+.wm-stat-signal {
+  display: block;
+  background: var(--signal);
+  position: absolute;
+  height: 3px;
+  width: 34px;
+  right: 13px;
+  top: 16px;
+  border-radius: 9px;
+}
+
+.wm-stat-label {
+  font-size: 11px;
+  color: var(--wm-ink-faint);
+}
+
+.wm-total .wm-stat-label,
+.wm-total small {
+  color: var(--wm-total-soft);
+}
+
+.wm-stat small,
+.wm-total small {
+  color: var(--wm-ink-faint);
+  font-size: 10px;
+}
+
+/* ------------------------------- 工作区面板 ------------------------------- */
+
+.wm-workspace {
+  border: 1px solid var(--wm-stroke);
+  border-radius: 13px;
+  background: var(--wm-panel);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+
+.wm-toolbar {
+  min-height: 58px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  gap: 12px;
+  border-bottom: 1px solid var(--wm-stroke);
+  flex-wrap: wrap;
+}
+
+.wm-toolbar-left,
+.wm-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.wm-actions {
+  gap: 9px;
+}
+
+.wm-toolbar-title {
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.wm-count {
+  background: var(--wm-panel-2);
+  border: 1px solid var(--wm-stroke);
+  border-radius: 99px;
+  padding: 5px 9px;
+  font-size: 10px;
+  color: var(--wm-ink-faint);
+}
+
+.wm-warning {
+  color: var(--color-warning);
+  background: rgba(217, 119, 6, 0.12);
+  border-radius: 6px;
+  padding: 6px;
+  font-size: 11px;
+}
+
+.wm-filters {
+  display: flex;
+  gap: 9px;
+  align-items: end;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--wm-stroke);
+  background: var(--wm-panel-2);
+}
+
+.wm-filters label {
+  font-size: 10px;
+  color: var(--wm-ink-faint);
+  display: grid;
+  gap: 5px;
+  min-width: 110px;
+}
+
+.wm-filters select,
+.wm-filters input {
+  border: 1px solid var(--wm-stroke);
+  border-radius: 8px;
+  min-height: 34px;
+  padding: 6px 9px;
+  background: var(--wm-panel);
+  color: var(--wm-ink);
+  font-size: 11px;
+  max-width: 170px;
+}
+
+.wm-filters select:focus,
+.wm-filters input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 0;
+}
+
+.wm-search {
+  flex: 1;
+  min-width: 125px;
+}
+
+.wm-search input {
+  width: 100%;
+  max-width: none;
+}
+
+/* --------------------------- V2：三维观察模式与楼层切换 --------------------------- */
+
+.wm-v2-tag {
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+  color: var(--primary);
+  background: var(--primary-subtle);
+  border: 1px solid var(--border);
+  padding: 4px 9px;
+  border-radius: 7px;
+  margin-left: 6px;
+  letter-spacing: 0;
+}
+
+.wm-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--wm-stroke);
+}
+
+.wm-view-switch {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid var(--wm-stroke);
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.wm-view-switch button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 7px 12px;
+  color: var(--wm-ink-faint);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.wm-view-switch button:hover {
+  color: var(--wm-ink);
+}
+
+.wm-view-switch button.is-active {
+  background: var(--wm-panel);
+  color: var(--primary);
+  border-color: var(--wm-stroke);
+  box-shadow: var(--shadow);
+}
+
+.wm-floor-chips {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow-x: auto;
+  max-width: 100%;
+  padding-bottom: 2px;
+}
+
+.wm-floor-chips button {
+  background: var(--wm-panel);
+  border: 1px solid var(--wm-stroke);
+  border-radius: 7px;
+  padding: 7px 11px;
+  color: var(--wm-ink-soft);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.wm-floor-chips button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.wm-floor-chips button.is-active {
+  background: var(--primary-subtle);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.wm-floor-chips button small {
+  font-size: 9px;
+  color: var(--wm-ink-faint);
+  margin-left: 4px;
+}
+
+.wm-view-switch button:focus-visible,
+.wm-floor-chips button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* --------------------------------- 三维舞台 -------------------------------- */
+
+.wm-stage {
+  height: clamp(520px, 66vh, 800px);
+  position: relative;
+  overflow: hidden;
+  /* WebGL 画布为透明底，舞台底色在这里给出（令牌驱动，明暗自动跟随） */
+  background:
+    radial-gradient(ellipse at 47% 22%, var(--wm-stage-glow) 4%, transparent 62%),
+    linear-gradient(180deg, var(--wm-stage-top), var(--wm-stage-bottom));
+}
+
+html.theme-dark .wm-stage {
+  --wm-stage-glow: rgba(56, 96, 132, 0.35);
+  --wm-stage-top: #16202e;
+  --wm-stage-bottom: #0e1620;
+}
+
+.ward-scene-canvas {
+  height: 100%;
+  width: 100%;
+  touch-action: none;
+}
+
+.ward-scene-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.wm-stage-tip {
+  position: absolute;
+  pointer-events: none;
+  left: 20px;
+  bottom: 18px;
+  max-width: 82%;
+  line-height: 1.55;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--wm-ink-faint);
+  font-size: 10px;
+}
+
+.wm-layer-chip {
+  background: var(--wm-panel);
+  padding: 7px 9px;
+  border-radius: 7px;
+  color: var(--wm-ink-soft);
+  border: 1px solid var(--wm-stroke);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: var(--shadow);
+}
+
+.wm-stage-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 20px;
+  gap: 15px;
+  border-top: 1px solid var(--wm-stroke);
+}
+
+.wm-legend {
+  display: flex;
+  gap: 17px;
+  flex-wrap: wrap;
+}
+
+.wm-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--wm-ink-faint);
+}
+
+.wm-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
+.wm-update {
+  color: var(--wm-ink-faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* -------------------------------- 悬停卡片 -------------------------------- */
+
+.wm-tooltip {
+  position: absolute;
+  z-index: 5;
+  background: var(--wm-panel);
+  border: 1px solid var(--wm-stroke);
+  border-radius: 11px;
+  padding: 12px 14px;
+  width: 235px;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  font-size: 11px;
+  color: var(--wm-ink-soft);
+}
+
+.wm-tooltip-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.wm-tooltip-head strong {
+  color: var(--wm-ink);
+}
+
+.wm-tooltip-head span {
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.wm-tooltip p {
+  margin: 7px 0;
+}
+
+.wm-tooltip small {
+  color: var(--wm-ink-faint);
+}
+
+.wm-danger {
+  color: var(--color-danger) !important;
+}
+
+/* ------------------------------- 二维床位列表 ------------------------------ */
+
+.wm-list {
+  height: 100%;
+  overflow: auto;
+  align-content: start;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.wm-list-bed {
+  background: var(--wm-panel);
+  text-align: left;
+  border: 1px solid var(--wm-stroke);
+  border-radius: 11px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--wm-ink);
+}
+
+.wm-list-bed:hover,
+.wm-list-selected {
+  border-color: var(--primary);
+}
+
+.wm-list-bed strong {
+  font-size: 12px;
+  color: var(--wm-ink);
+}
+
+.wm-list-bed > small {
+  color: var(--wm-ink-faint);
+  grid-column: 2 / 4;
+}
+
+.wm-bed-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 4px;
+}
+
+/* ------------------------------ 键盘可达列表 ------------------------------ */
+
+.wm-keyboard {
+  padding: 0 20px 14px;
+  color: var(--wm-ink-faint);
+  font-size: 11px;
+}
+
+.wm-keyboard summary {
+  cursor: pointer;
+}
+
+.wm-keyboard-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 12px;
+}
+
+.wm-keyboard-grid button {
+  padding: 8px 10px;
+  border: 1px solid var(--wm-stroke);
+  border-radius: 7px;
+  background: var(--wm-panel);
+  color: var(--wm-ink-soft);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.wm-keyboard-grid button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* -------------------------- 详情抽屉（复用共享 Modal） -------------------------- */
+
+.wm-drawer-header h2 {
+  font-size: 25px;
+  margin: 5px 0;
+  color: var(--wm-ink);
+}
+
+.wm-drawer-header p {
+  margin: 0;
+  color: var(--wm-ink-faint);
+  font-size: 12px;
+}
+
+.wm-drawer-body h3 {
+  font-size: 13px;
+  color: var(--wm-ink);
+  margin: 24px 0 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.wm-drawer-body h3 span {
+  font-size: 10px;
+  color: var(--wm-ink-faint);
+  font-weight: 400;
+}
+
+.wm-detail-state {
+  background: var(--wm-panel-2);
+  border: 1px solid var(--wm-stroke);
+  border-radius: 10px;
+  padding: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.wm-detail-state > span:last-child {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--wm-ink-faint);
+}
+
+.wm-fields {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+}
+
+.wm-fields div {
+  min-width: 0;
+}
+
+.wm-fields dt {
+  font-size: 10px;
+  color: var(--wm-ink-faint);
+  margin-bottom: 5px;
+}
+
+.wm-fields dd {
+  font-size: 12px;
+  color: var(--wm-ink);
+  margin: 0;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.wm-patient {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  background: var(--wm-panel-2);
+  border: 1px solid var(--wm-stroke);
+  border-radius: 11px;
+  padding: 14px;
+}
+
+.wm-avatar {
+  border-radius: 50%;
+  height: 39px;
+  width: 39px;
+  flex: 0 0 auto;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+}
+
+.wm-patient strong {
+  font-size: 13px;
+}
+
+.wm-patient p {
+  font-size: 11px;
+  color: var(--wm-ink-faint);
+  margin: 4px 0;
+}
+
+.wm-none {
+  color: var(--wm-ink-faint);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.wm-timeline {
+  margin: 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+  border-left: 1px solid var(--wm-stroke);
+}
+
+.wm-timeline li {
+  padding: 0 0 23px 15px;
+  position: relative;
+}
+
+.wm-timeline li::before {
+  content: '';
+  position: absolute;
+  background: var(--primary);
+  height: 9px;
+  width: 9px;
+  border: 2px solid var(--wm-panel);
+  border-radius: 100%;
+  left: -5px;
+  top: 1px;
+}
+
+.wm-timeline strong,
+.wm-timeline small {
+  display: block;
+  font-size: 11px;
+  color: var(--wm-ink);
+  margin: 5px 0;
+}
+
+.wm-timeline small {
+  color: var(--wm-ink-faint);
+}
+
+.wm-time {
+  font-size: 10px;
+  color: var(--wm-ink-faint);
+}
+
+/* -------------------------------- 响应式 -------------------------------- */
+
+@media (max-width: 1250px) {
+  .wm-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .wm-filters label {
+    min-width: 90px;
+  }
+
+  .wm-stage {
+    height: 540px;
+  }
+}
+
+@media (max-width: 720px) {
+  .wm-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .wm-heading h1 {
+    font-size: 23px;
+  }
+
+  .wm-heading-actions {
+    width: 100%;
+  }
+
+  .wm-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wm-stage {
+    height: 440px;
+  }
+
+  .wm-view-controls {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .wm-view-switch {
+    width: 100%;
+  }
+
+  .wm-view-switch button {
+    flex: 1 1 0;
+    padding: 7px 6px;
+    text-align: center;
+  }
+
+  .wm-floor-chips {
+    width: 100%;
+  }
+
+  .wm-stage-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .wm-filters {
+    padding: 12px;
+  }
+
+  .wm-filters label {
+    min-width: 0;
+    flex: 1 1 130px;
+  }
+
+  .wm-filters select,
+  .wm-filters input {
+    max-width: none;
+    width: 100%;
+  }
+
+  .wm-toolbar {
+    padding: 12px;
+  }
+
+  .wm-list {
+    grid-template-columns: 1fr;
+  }
+
+  .wm-tooltip {
+    display: none;
+  }
+
+  .wm-fields {
+    grid-template-columns: 1fr;
+  }
+}

@@ -38,6 +38,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '床位管理', requiresAuth: true },
   },
   {
+    path: '/ward-map',
+    name: 'ward-map',
+    component: () => import('@/views/WardMapView.vue'),
+    meta: { title: '病区床位态势图', requiresAuth: true },
+  },
+  {
     path: '/allocations',
     name: 'allocations',
     component: () => import('@/views/AllocationsView.vue'),

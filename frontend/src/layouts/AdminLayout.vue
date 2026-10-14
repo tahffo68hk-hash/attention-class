@@ -35,6 +35,7 @@ const navGroups: NavGroup[] = [
       { name: 'admissions', path: '/admissions', label: '住院证与预登记', symbol: '▤' },
       { name: 'recommendations', path: '/recommendations', label: '床位推荐', symbol: '✦' },
       { name: 'beds', path: '/beds', label: '床位管理', symbol: '▥' },
+      { name: 'ward-map', path: '/ward-map', label: '病区床位态势图', symbol: '⬡' },
       { name: 'allocations', path: '/allocations', label: '分配与住院办理', symbol: '⇄' },
     ],
   },

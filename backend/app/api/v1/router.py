@@ -16,6 +16,7 @@ from app.api.v1 import (
     system,
     optimization,
     assistant,
+    ward_map,
 )
 
 api_router = APIRouter()
@@ -35,5 +36,7 @@ api_router.include_router(base_data.patients_router)
 api_router.include_router(base_data.doctors_router)
 api_router.include_router(dashboard.router)
 api_router.include_router(audit.router)
+# 病区床位态势图（只读；模拟空间布局 + 真实业务状态）
+api_router.include_router(ward_map.router)
 
 __all__ = ["api_router"]
