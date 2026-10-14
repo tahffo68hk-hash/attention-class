@@ -245,9 +245,11 @@ SHA256：`845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a`
 b3c2a97  feat(p4): 集成 DeepSeek 可选真实 AI 解释（基线，执行前 HEAD）
 cddb9cd  chore(p4-pilot): 建立 DeepSeek 真实调用 Pilot 的有界运行器与离线证据（BLOCKED：本机未配置密钥）
 d8b64a0  docs(p4-pilot): 报告补充本轮引入提交号 cddb9cd
+7c9871e  fix(p4-pilot): 运行器 Pilot ID 首次落盘 + 证据 .log 未被跟踪问题修正
 ```
 
 - `cddb9cd` 引入本报告、证据目录与运行器（5 files changed, +1165）。
+- `7c9871e` 为本轮收尾修复（5 files changed, +83/-12）。
 - **本轮收尾修复**：`load_state()` 首次调用即落盘（Pilot ID 持久化）、
   证据文件名 `dry_run_console.log` → `.txt`（原后缀命中 `.gitignore:13` 的 `*.log`，
   **实际未入库**，报告引用因此失效，已修正）、彩排重跑刷新 `preflight_dry_run.json`。
