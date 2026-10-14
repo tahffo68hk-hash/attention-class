@@ -49,6 +49,9 @@ const MANUAL_TRANSITIONS: Record<string, string[]> = {
   MAINTENANCE: ['AVAILABLE'],
 }
 
+/** 视图模式：列表（密集表格）/ 矩阵（床位图） */
+const viewMode = ref<'list' | 'matrix'>('list')
+
 const beds = ref<BedRead[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -159,6 +162,28 @@ async function openLogs(bed: BedRead) {
   }
 }
 
+/** 流水抽屉里可否直接发起手工状态调整 / 清洁释放 */
+const drawerCanMaintain = computed(
+  () =>
+    canOperateAllocation.value &&
+    (MANUAL_TRANSITIONS[logsBed.value?.status ?? '']?.length ?? 0) > 0,
+)
+const drawerCanRelease = computed(
+  () => canOperateAllocation.value && logsBed.value?.status === 'CLEANING',
+)
+
+function maintainFromDrawer() {
+  if (!logsBed.value) return
+  const bed = logsBed.value
+  logsOpen.value = false
+  openStatus(bed)
+}
+
+async function releaseFromDrawer() {
+  if (!logsBed.value) return
+  await onRelease(logsBed.value)
+}
+
 /* ------------------------------ 手工调状态 ------------------------------ */
 
 const statusOpen = ref(false)
@@ -205,6 +230,7 @@ async function onRelease(bed: BedRead) {
   errorMessage.value = ''
   try {
     await releaseBed(bed.id, '管理端手工释放')
+    logsOpen.value = false
     await load()
   } catch (err) {
     errorMessage.value = err instanceof ApiError ? `[${err.code}] ${err.message}` : '释放床位失败'
@@ -225,11 +251,21 @@ function fmtTime(value: string | null) {
 function statusLabelOf(v: string) {
   return STATUS_OPTIONS.find((o) => o.value === v)?.label ?? v
 }
+
+/** 历史流水里操作者为空时的展示（P3 早期记录没有操作者字段） */
+function operatorOf(log: BedStatusLogRead) {
+  return log.operator_name || '未记录（历史）'
+}
 </script>
 
 <template>
-  <h1 class="page-title">床位管理</h1>
-  <p class="page-subtitle">按科室 / 病房 / 状态 / 床型 / 隔离 / 性别限制筛选床位，查看状态流水。</p>
+  <div class="pagehead">
+    <div>
+      <h1>床位管理</h1>
+      <p>按科室 / 病房 / 状态 / 床型 / 隔离 / 性别限制筛选床位，查看状态流水。</p>
+    </div>
+    <button class="btn outline" :disabled="loading" @click="load">刷新</button>
+  </div>
 
   <div v-if="errorMessage" class="alert alert--danger">{{ errorMessage }}</div>
 
@@ -237,7 +273,12 @@ function statusLabelOf(v: string) {
     <div class="form-grid">
       <div class="field">
         <label>关键字（床位号 / 病房号）</label>
-        <input v-model.trim="filters.keyword" class="input" placeholder="如 C-101-01" @keyup.enter="applyFilters" />
+        <input
+          v-model.trim="filters.keyword"
+          class="input"
+          placeholder="如 C-101-01"
+          @keyup.enter="applyFilters"
+        />
       </div>
       <div class="field">
         <label>科室</label>
@@ -273,7 +314,9 @@ function statusLabelOf(v: string) {
         <label>性别限制</label>
         <select v-model="filters.gender_limit" class="select" @change="applyFilters">
           <option value="">全部</option>
-          <option v-for="o in GENDER_LIMIT_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+          <option v-for="o in GENDER_LIMIT_OPTIONS" :key="o.value" :value="o.value">
+            {{ o.label }}
+          </option>
         </select>
       </div>
       <div class="field">
@@ -293,7 +336,36 @@ function statusLabelOf(v: string) {
     </div>
   </div>
 
-  <div class="table-wrap">
+  <div class="bed-mode-switch">
+    <button :class="{ active: viewMode === 'list' }" @click="viewMode = 'list'">☷ 列表视图</button>
+    <button :class="{ active: viewMode === 'matrix' }" @click="viewMode = 'matrix'">▦ 床位矩阵</button>
+  </div>
+
+  <!-- 矩阵视图：点击床位卡片查看流水 -->
+  <div v-if="viewMode === 'matrix'" class="card">
+    <p v-if="loading" class="spinner-text">正在加载床位…</p>
+    <div v-else-if="beds.length" class="bed-matrix">
+      <button
+        v-for="bed in beds"
+        :key="bed.id"
+        class="bed-tile"
+        :data-status="bed.status"
+        @click="openLogs(bed)"
+      >
+        <span class="tile-row">
+          <strong>{{ bed.code }}</strong>
+          <StatusBadge kind="bed" :value="bed.status" :label="bed.status_label" />
+        </span>
+        <small>{{ bed.department_name }} · {{ bed.ward_name }}</small>
+        <small>{{ bed.current_patient_name || '当前无患者' }}</small>
+        <small v-if="bed.is_isolation">隔离床 · {{ bed.bed_type_label || bed.bed_type }}</small>
+      </button>
+    </div>
+    <p v-else class="empty">没有符合条件的床位</p>
+  </div>
+
+  <!-- 列表视图 -->
+  <div v-else class="table-wrap">
     <table class="table">
       <thead>
         <tr>
@@ -356,37 +428,65 @@ function statusLabelOf(v: string) {
 
   <Pager :page="page" :page-size="pageSize" :total="total" @update:page="changePage" />
 
-  <!-- 状态流水 -->
-  <Modal :open="logsOpen" :title="`床位状态流水 · ${logsBed?.code ?? ''}`" width="720px" @close="logsOpen = false">
+  <!-- 状态流水（右侧抽屉） -->
+  <Modal
+    :open="logsOpen"
+    variant="drawer"
+    :title="`床位状态流水 · ${logsBed?.code ?? ''}`"
+    @close="logsOpen = false"
+  >
+    <p v-if="logsBed" class="kv-inline" style="margin-bottom: 12px">
+      <span>科室：<strong>{{ logsBed.department_name }}</strong></span>
+      <span>病房：<strong>{{ logsBed.ward_name }}</strong></span>
+      <span>当前状态：<StatusBadge kind="bed" :value="logsBed.status" :label="logsBed.status_label" /></span>
+    </p>
+
     <p v-if="logsLoading" class="spinner-text">加载中…</p>
     <div v-else-if="logsError" class="alert alert--danger">{{ logsError }}</div>
-    <table v-else class="score-table">
-      <thead>
-        <tr>
-          <th>时间</th>
-          <th>变更</th>
-          <th>原因</th>
-          <th>操作人</th>
-          <th>关联分配</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="log in logs" :key="log.id">
-          <td>{{ fmtTime(log.created_at) }}</td>
-          <td>
-            <span class="note">{{ log.from_status ? statusLabelOf(log.from_status) : '—' }}</span>
-            →
-            <strong>{{ statusLabelOf(log.to_status) }}</strong>
-          </td>
-          <td>{{ log.reason || '—' }}</td>
-          <td>{{ log.operator_name || '未知' }}</td>
-          <td>{{ log.allocation_id ? `#${log.allocation_id}` : '—' }}</td>
-        </tr>
-        <tr v-if="!logs.length">
-          <td colspan="5" class="empty">暂无状态流水</td>
-        </tr>
-      </tbody>
-    </table>
+    <template v-else>
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>变更</th>
+              <th>原因</th>
+              <th>操作人</th>
+              <th>关联分配</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="log in logs" :key="log.id">
+              <td>{{ fmtTime(log.created_at) }}</td>
+              <td>
+                <span class="note">{{ log.from_status ? statusLabelOf(log.from_status) : '—' }}</span>
+                →
+                <strong>{{ statusLabelOf(log.to_status) }}</strong>
+              </td>
+              <td>{{ log.reason || '—' }}</td>
+              <td>{{ operatorOf(log) }}</td>
+              <td>{{ log.allocation_id ? `#${log.allocation_id}` : '—' }}</td>
+            </tr>
+            <tr v-if="!logs.length">
+              <td colspan="5" class="empty">暂无状态流水</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
+    <template #footer>
+      <button class="btn" @click="logsOpen = false">关闭</button>
+      <button v-if="drawerCanMaintain" class="btn" @click="maintainFromDrawer">维护/恢复</button>
+      <button
+        v-if="drawerCanRelease"
+        class="btn btn--primary"
+        :disabled="releaseBusyId === logsBed?.id"
+        @click="releaseFromDrawer"
+      >
+        清洁释放
+      </button>
+    </template>
   </Modal>
 
   <!-- 手工调状态（仅维护 / 恢复维护） -->
@@ -418,10 +518,3 @@ function statusLabelOf(v: string) {
     </template>
   </Modal>
 </template>
-
-<style scoped>
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-</style>

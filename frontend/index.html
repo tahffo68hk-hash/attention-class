@@ -3,7 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>医院床位智能分配与住院入院预办理系统</title>
+    <script>
+      // 首帧前落主题：持久化值优先，其次跟随系统偏好
+      (function () {
+        try {
+          var t = localStorage.getItem('attention-theme')
+          if (t !== 'dark' && t !== 'light') {
+            t =
+              window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          }
+          document.documentElement.classList.toggle('theme-dark', t === 'dark')
+          document.documentElement.setAttribute('data-theme', t)
+        } catch (e) {
+          /* 忽略：主题引导失败不影响业务 */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

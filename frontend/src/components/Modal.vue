@@ -1,13 +1,24 @@
 <script setup lang="ts">
-import { onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, watch } from 'vue'
 
-const props = defineProps<{
-  open: boolean
-  title: string
-  width?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    title: string
+    width?: string
+    /** default = 居中模态框；drawer = 右侧抽屉（如床位状态流水） */
+    variant?: 'default' | 'drawer'
+  }>(),
+  { width: undefined, variant: 'default' },
+)
 
 const emit = defineEmits<{ (e: 'close'): void }>()
+
+const isDrawer = computed(() => props.variant === 'drawer')
+
+const bodyStyle = computed(() =>
+  isDrawer.value ? undefined : { maxWidth: props.width || '560px' },
+)
 
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') emit('close')
@@ -29,8 +40,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-backdrop" @click.self="emit('close')">
-      <div class="modal" :style="{ maxWidth: width || '560px' }">
+    <div
+      v-if="open"
+      class="modal-backdrop"
+      :class="{ 'drawer-backdrop': isDrawer }"
+      @click.self="emit('close')"
+    >
+      <div class="modal" :class="{ drawer: isDrawer }" :style="bodyStyle">
         <div class="modal__head">
           <h3>{{ title }}</h3>
           <button class="modal__close" aria-label="关闭" @click="emit('close')">×</button>
