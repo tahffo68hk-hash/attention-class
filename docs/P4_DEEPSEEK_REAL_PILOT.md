@@ -210,6 +210,13 @@ SHA256：`845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a`
 明细明确含 `no_prompt_logged:true` / `no_request_ids_logged:true`）。
 详见 `docs/evidence/p4_real_pilot/api_gate_checks.md`。
 
+> **收尾复测（14:10 再核）**：`audit_logs` 现为 **140**（新增 id 139/140，均为
+> `action=RECOMMEND`、`result=SUCCESS` 的**只读**推荐留痕，`object_type=admission_request`，
+> 未改动任何业务实体）。业务表计数 `beds 44 / bed_allocations 15 / admission_requests 22 /
+> bed_status_logs 34 / 活动占用 5` 与床位状态分布（AVAILABLE 37 / RESERVED 2 / OCCUPIED 3 /
+> CLEANING 1 / MAINTENANCE 1）**自报告生成后完全未变**；真实 DeepSeek 请求数仍为 **0/2**，
+> `DEEPSEEK_EXTERNAL_ENABLED` 仍为 `false`。
+
 ---
 
 ## 7. 凭据清理风险（按授权要求记录）
