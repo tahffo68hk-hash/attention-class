@@ -356,3 +356,82 @@ export interface AuditLogRead {
   ip: string | null
   created_at: string | null
 }
+
+/* -------------------------- 多患者联合排床（P1） -------------------------- */
+
+export interface OptimizationPairOut {
+  admission_request_id: number
+  bed_id: number
+  priority_rank: number
+  score: number
+}
+
+export interface OptimizationResultOut {
+  method: string
+  pairs: OptimizationPairOut[]
+  unmatched_request_ids: number[]
+  admitted: number
+  priority_sum: number
+  score_sum: number
+  runtime_ms: number
+  proven_optimal: boolean
+}
+
+export interface OptimizationPreviewOut {
+  optimization_version: string
+  score_version: string
+  generated_at: string
+  admission_request_ids: number[]
+  request_count: number
+  candidate_edges: number
+  baseline: OptimizationResultOut
+  optimized: OptimizationResultOut
+  admitted_gain: number
+  score_gain: number
+  preview_only: boolean
+  message: string
+}
+
+/* --------------------------- 辅助解释（P2） --------------------------- */
+
+export interface EvidenceScore {
+  key: string
+  raw_score: number
+  contribution: number
+}
+
+export interface ExplainOut {
+  version: string
+  provider: string
+  model: string | null
+  real_ai: boolean
+  externally_sent: boolean
+  status: string
+  message: string
+  explanation: string
+  cautions: string[]
+  hard_constraints_passed: boolean
+  score: number
+  evidence: EvidenceScore[]
+  warnings: string[]
+  prompt_version: string | null
+  input_tokens: number | null
+  output_tokens: number | null
+  cost_usd: number | null
+  latency_ms: number | null
+  review_required: boolean
+  performed_allocation: boolean
+}
+
+export interface PlanExplainOut {
+  version: string
+  provider: string
+  real_ai: boolean
+  preview_only: boolean
+  explanation: string
+  recommendations: string[]
+  assigned_count: number
+  unmatched_request_ids: number[]
+  baseline_assigned_count: number
+  review_required: boolean
+}

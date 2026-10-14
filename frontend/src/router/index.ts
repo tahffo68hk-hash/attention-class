@@ -44,6 +44,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '分配与住院办理', requiresAuth: true },
   },
   {
+    path: '/optimization',
+    name: 'optimization',
+    component: () => import('@/views/OptimizationView.vue'),
+    meta: { title: '多患者联合排床', requiresAuth: true },
+  },
+  {
+    path: '/assistant',
+    name: 'assistant',
+    component: () => import('@/views/AssistantView.vue'),
+    meta: { title: '辅助决策解释', requiresAuth: true },
+  },
+  {
     path: '/audit',
     name: 'audit',
     component: () => import('@/views/AuditView.vue'),

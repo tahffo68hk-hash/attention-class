@@ -146,11 +146,11 @@ def get_bed(db: Session, bed_id: int) -> Bed:
 
 
 
-def _fingerprint_reservation(request_id: int, bed_id: int | None, confirm: bool, note: str | None) -> str:
+def _fingerprint_reservation(request_id: int, bed_id: int | None, confirm: bool, note: str | None, operator_id: int | None = None) -> str:
     """Hash all behavior-affecting arguments; same key + different body must be rejected."""
     canonical = json.dumps(
         {"request_id": request_id, "bed_id": bed_id,
-         "confirm_top_recommendation": confirm, "note": note},
+         "confirm_top_recommendation": confirm, "note": note, "operator_id": operator_id},
         sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -241,7 +241,7 @@ def reserve_bed(
 ) -> BedAllocation:
     """预占：先获取幂等键，再锁住院证、锁床位，双唯一约束兜底。"""
     idem_record: AllocationIdempotency | None = None
-    digest = _fingerprint_reservation(request_id, bed_id, confirm_top_recommendation, note)
+    digest = _fingerprint_reservation(request_id, bed_id, confirm_top_recommendation, note, getattr(operator, "id", None))
     try:
         if idempotency_key is not None:
             idem_record, replayed = _reserve_idempotency(db, idempotency_key, digest)

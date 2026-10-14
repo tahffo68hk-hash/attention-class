@@ -15,8 +15,11 @@ import type {
   DashboardSummary,
   DepartmentRead,
   DoctorRead,
+  ExplainOut,
+  OptimizationPreviewOut,
   Page,
   PatientRead,
+  PlanExplainOut,
   PreadmissionCreate,
   PreadmissionRead,
   RecommendationResponse,
@@ -172,8 +175,30 @@ export async function fetchAllocations(params?: Query): Promise<Page<AllocationR
   return data
 }
 
-export async function createAllocation(payload: AllocationCreate): Promise<AllocationRead> {
-  const { data } = await http.post<AllocationRead>('/api/v1/allocations', payload)
+export async function createAllocation(
+  payload: AllocationCreate,
+  idempotencyKey?: string,
+): Promise<AllocationRead> {
+  const { data } = await http.post<AllocationRead>('/api/v1/allocations', payload, {
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+  })
+  return data
+}
+
+/**
+ * 人工换床：仅预占用（RESERVED）状态可用。
+ *
+ * 后端会把旧分配置为 CANCELLED 并生成新的 RESERVED 记录，失败整体回滚。
+ */
+export async function reassignAllocation(
+  allocationId: number,
+  newBedId: number,
+  reason: string,
+): Promise<AllocationRead> {
+  const { data } = await http.post<AllocationRead>(
+    `/api/v1/allocations/${allocationId}/reassign`,
+    { new_bed_id: newBedId, reason },
+  )
   return data
 }
 
@@ -213,6 +238,50 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
 export async function fetchAuditLogs(params?: Query): Promise<Page<AuditLogRead>> {
   const { data } = await http.get<Page<AuditLogRead>>('/api/v1/audit-logs', {
     params: clean(params),
+  })
+  return data
+}
+
+/* -------------------------- 多患者联合排床（P1，只读） -------------------------- */
+
+/**
+ * 对同一批待入院住院证比较「贪心」与「全局优化」方案。
+ *
+ * 纯计算预览：后端不会写入任何分配记录。
+ */
+export async function fetchOptimizationPreview(
+  admissionRequestIds: number[],
+  solver: 'auto' | 'flow' | 'cp_sat' = 'auto',
+): Promise<OptimizationPreviewOut> {
+  const { data } = await http.post<OptimizationPreviewOut>('/api/v1/optimization/preview', {
+    admission_request_ids: admissionRequestIds,
+    solver,
+  })
+  return data
+}
+
+/* --------------------------- 辅助解释（P2，只读） --------------------------- */
+
+/** 单个「住院证 × 床位」推荐解释；默认走确定性规则，不产生外部调用。 */
+export async function explainBed(payload: {
+  admission_request_id: number
+  bed_id: number
+  mode?: 'rules' | 'llm'
+  confirm_external_call?: boolean
+}): Promise<ExplainOut> {
+  const { data } = await http.post<ExplainOut>('/api/v1/assistant/explain', {
+    mode: 'rules',
+    confirm_external_call: false,
+    ...payload,
+  })
+  return data
+}
+
+/** 联合排床方案说明（确定性规则、非 AI、无写入）。 */
+export async function explainPlan(admissionRequestIds: number[]): Promise<PlanExplainOut> {
+  const { data } = await http.post<PlanExplainOut>('/api/v1/assistant/explain-plan', {
+    admission_request_ids: admissionRequestIds,
+    solver: 'auto',
   })
   return data
 }

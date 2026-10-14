@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import joinedload
 
 from app.api.deps import CurrentUser, DbSession
 from app.models.admission import AdmissionRequest, Preadmission
-from app.models.enums import AdmissionRequestStatus
+from app.models.enums import AdmissionRequestStatus, PatientPriority
 from app.schemas.admission import PreadmissionRead
 from app.schemas.common import Page
 from app.services.serializers import preadmission_read
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/preadmissions", tags=["待入院队列"])
 @router.get(
     "",
     response_model=Page[PreadmissionRead],
-    summary="待入院队列（按队列序号升序）",
+    summary="待入院队列（五级优先级优先，同级登记顺序）",
     description="已完成预入院登记、尚未入住的住院证构成待入院队列；"
     "可用 priority 参数筛选特定优先级。",
 )
@@ -53,7 +53,18 @@ def list_queue(
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = list(
         db.execute(
-            stmt.order_by(Preadmission.queue_sequence.asc())
+            stmt.order_by(
+                case(
+                    (AdmissionRequest.priority == PatientPriority.CRITICAL, 5),
+                    (AdmissionRequest.priority == PatientPriority.SEVERE, 4),
+                    (AdmissionRequest.priority == PatientPriority.URGENT, 3),
+                    (AdmissionRequest.priority == PatientPriority.NORMAL, 2),
+                    (AdmissionRequest.priority == PatientPriority.MILD, 1),
+                    else_=0,
+                ).desc(),
+                Preadmission.queue_sequence.asc(),
+                Preadmission.id.asc(),
+            )
             .offset((page - 1) * page_size)
             .limit(page_size)
         )

@@ -10,6 +10,8 @@ import {
   fetchAllocations,
   fetchBeds,
   fetchDepartments,
+  fetchRecommendations,
+  reassignAllocation,
 } from '@/api/business'
 import { ApiError } from '@/api/http'
 import { useAuth } from '@/stores/auth'
@@ -17,6 +19,7 @@ import type {
   AdmissionRequestRead,
   AllocationRead,
   BedRead,
+  BedRecommendation,
   DepartmentRead,
 } from '@/api/types'
 
@@ -119,6 +122,56 @@ function onCancel(row: AllocationRead) {
   guaedRun(row.id, () => cancelAllocation(row.id, reason), '已取消预占用，床位回到空闲')
 }
 
+/* ------------------------------ 人工换床 ------------------------------ */
+
+const reassignOpen = ref(false)
+const reassignRow = ref<AllocationRead | null>(null)
+const reassignCandidates = ref<BedRecommendation[]>([])
+const reassignLoading = ref(false)
+const reassignBusy = ref(false)
+const reassignError = ref('')
+const reassignForm = reactive({ bedId: '' as number | '', reason: '' })
+
+async function openReassign(row: AllocationRead) {
+  reassignOpen.value = true
+  reassignRow.value = row
+  reassignError.value = ''
+  reassignCandidates.value = []
+  reassignForm.bedId = ''
+  reassignForm.reason = ''
+  reassignLoading.value = true
+  try {
+    // 复用推荐接口拿到「合规且当前可用」的候选床位，排除当前占用的那张
+    const data = await fetchRecommendations(row.admission_request_id, 50)
+    reassignCandidates.value = data.recommendations.filter((b) => b.bed_id !== row.bed_id)
+  } catch (err) {
+    reassignError.value =
+      err instanceof ApiError ? `[${err.code}] ${err.message}` : '加载候选床位失败'
+  } finally {
+    reassignLoading.value = false
+  }
+}
+
+async function submitReassign() {
+  if (!reassignRow.value || !reassignForm.bedId || !reassignForm.reason.trim()) return
+  reassignBusy.value = true
+  reassignError.value = ''
+  try {
+    const alloc = await reassignAllocation(
+      reassignRow.value.id,
+      Number(reassignForm.bedId),
+      reassignForm.reason.trim(),
+    )
+    reassignOpen.value = false
+    feedback.value = `已换床到 ${alloc.bed_code ?? '—'}（新分配 #${alloc.id}，原分配已置为已取消）`
+    await load()
+  } catch (err) {
+    reassignError.value = err instanceof ApiError ? `[${err.code}] ${err.message}` : '换床失败'
+  } finally {
+    reassignBusy.value = false
+  }
+}
+
 /* ------------------------------ 新建分配 ------------------------------ */
 
 const createOpen = ref(false)
@@ -138,6 +191,18 @@ const selectedRequest = computed(
   () => pendingRequests.value.find((r) => r.id === createStep.requestId) ?? null,
 )
 
+/**
+ * 幂等键：同一次「新建分配」意图只生成一次，重试复用同一键，
+ * 后端据此保证网络重试不会重复占用床位（同键同参返回原分配）。
+ */
+const createIdempotencyKey = ref('')
+
+function newIdempotencyKey(): string {
+  const c = globalThis.crypto as Crypto | undefined
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  return `alloc-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+}
+
 async function openCreate() {
   createOpen.value = true
   createError.value = ''
@@ -145,6 +210,7 @@ async function openCreate() {
   createStep.mode = 'RECOMMENDED'
   createStep.bedId = ''
   createStep.note = ''
+  createIdempotencyKey.value = newIdempotencyKey()
   availableBeds.value = []
   createLoading.value = true
   try {
@@ -182,12 +248,15 @@ async function submitCreate() {
   createBusy.value = true
   createError.value = ''
   try {
-    const alloc = await createAllocation({
-      admission_request_id: createStep.requestId,
-      bed_id: createStep.mode === 'MANUAL' ? Number(createStep.bedId) || null : null,
-      confirm_top_recommendation: createStep.mode === 'RECOMMENDED',
-      note: createStep.note || undefined,
-    })
+    const alloc = await createAllocation(
+      {
+        admission_request_id: createStep.requestId,
+        bed_id: createStep.mode === 'MANUAL' ? Number(createStep.bedId) || null : null,
+        confirm_top_recommendation: createStep.mode === 'RECOMMENDED',
+        note: createStep.note || undefined,
+      },
+      createIdempotencyKey.value || undefined,
+    )
     createOpen.value = false
     feedback.value = `已预占用床位 ${alloc.bed_code ?? '—'}（分配 #${alloc.id}）。可在下方列表中办理入住。`
     await load()
@@ -309,6 +378,14 @@ function fmtTime(value: string | null) {
                 v-if="row.status === 'RESERVED'"
                 class="btn btn--sm"
                 :disabled="busyId === row.id"
+                @click="openReassign(row)"
+              >
+                换床
+              </button>
+              <button
+                v-if="row.status === 'RESERVED'"
+                class="btn btn--sm"
+                :disabled="busyId === row.id"
                 @click="onCancel(row)"
               >
                 取消
@@ -399,6 +476,64 @@ function fmtTime(value: string | null) {
         @click="submitCreate"
       >
         {{ createBusy ? '提交中…' : '确认预占用' }}
+      </button>
+    </template>
+  </Modal>
+
+  <!-- 人工换床 -->
+  <Modal
+    :open="reassignOpen"
+    title="人工换床（仅预占用状态）"
+    width="620px"
+    @close="reassignOpen = false"
+  >
+    <div v-if="reassignError" class="alert alert--danger">{{ reassignError }}</div>
+
+    <p class="note">
+      分配 #{{ reassignRow?.id }} · 床位 {{ reassignRow?.bed_code || '—' }} ·
+      患者 {{ reassignRow?.patient_name || '—' }}
+    </p>
+
+    <p v-if="reassignLoading" class="spinner-text">加载合规候选床位…</p>
+    <template v-else>
+      <div class="field">
+        <label>新床位（同科室、当前空闲、通过硬约束校验）</label>
+        <select v-model="reassignForm.bedId" class="select">
+          <option value="">请选择床位…</option>
+          <option v-for="b in reassignCandidates" :key="b.bed_id" :value="b.bed_id">
+            {{ b.bed_code }} · {{ b.ward_name }} · {{ b.bed_type_label }} ·
+            {{ b.score }} 分<template v-if="b.is_isolation"> · 隔离床</template>
+          </option>
+        </select>
+        <p v-if="!reassignCandidates.length" class="note">
+          当前没有其他合规可用床位，无法换床。
+        </p>
+      </div>
+
+      <div class="field">
+        <label>换床原因（必填）</label>
+        <input
+          v-model.trim="reassignForm.reason"
+          class="input"
+          maxlength="255"
+          placeholder="如：原床位邻近感染区，调整位置"
+        />
+      </div>
+
+      <p class="note">
+        提交后原分配会置为「已取消」，并生成一条新的预占用记录；床位状态与审计在同一事务内，
+        任一步失败都会整体回滚。
+      </p>
+    </template>
+
+    <template #footer>
+      <button class="btn" @click="reassignOpen = false">取消</button>
+      <button
+        class="btn btn--primary"
+        :disabled="reassignBusy || !reassignForm.bedId || !reassignForm.reason.trim()"
+        @click="submitReassign"
+      >
+        {{ reassignBusy ? '提交中…' : '确认换床' }}
       </button>
     </template>
   </Modal>

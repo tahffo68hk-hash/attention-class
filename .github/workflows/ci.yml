@@ -1,0 +1,51 @@
+name: CI (fictional medical data only)
+on:
+  push:
+  pull_request:
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        ports: ['3306:3306']
+        env:
+          MYSQL_ROOT_PASSWORD: local_test_root
+          MYSQL_DATABASE: hospital_test
+          MYSQL_USER: hospital_app
+          MYSQL_PASSWORD: local_test_pw
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -plocal_test_root --silent"
+          --health-interval=5s --health-timeout=3s --health-retries=20
+    env:
+      DATABASE_URL: mysql+pymysql://hospital_app:local_test_pw@127.0.0.1:3306/hospital_test?charset=utf8mb4
+      TEST_DATABASE_URL: mysql+pymysql://hospital_app:local_test_pw@127.0.0.1:3306/hospital_test?charset=utf8mb4
+      SECRET_KEY: ci_key_for_ephemeral_isolated_fake_data_only_1234567890
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Run MySQL API and concurrency tests
+        working-directory: backend
+        run: python -m pytest -q tests
+      - name: Test P1/P2 optimization and explanation (SQLite, no external AI)
+        working-directory: backend
+        run: python -m pytest -q tests_p1p2 tests_p15 tests_p25
+      - name: Run isolated SQLite behavioral tests
+        working-directory: backend
+        run: python -m pytest -q tests_m1_local
+      - name: Synthetic dispatch benchmark (no DB writes)
+        run: python scripts/benchmark_matrix.py --output-dir docs/experiments/ci-p15
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install frontend dependencies and build
+        working-directory: frontend
+        run: npm install --no-audit --no-fund && npm run build

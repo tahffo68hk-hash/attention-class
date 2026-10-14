@@ -14,10 +14,14 @@ from app.api.v1 import (
     queue,
     recommendations,
     system,
+    optimization,
+    assistant,
 )
 
 api_router = APIRouter()
 api_router.include_router(system.router)
+api_router.include_router(optimization.router)
+api_router.include_router(assistant.router)
 api_router.include_router(auth.router)
 api_router.include_router(admissions.router)
 api_router.include_router(recommendations.router)

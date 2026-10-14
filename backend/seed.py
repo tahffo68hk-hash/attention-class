@@ -36,6 +36,7 @@ from app.models.patient import Patient
 from app.models.user import Doctor, User
 
 TABLES_IN_DELETE_ORDER = [
+    "allocation_idempotency",
     "bed_status_logs",
     "bed_allocations",
     "preadmissions",

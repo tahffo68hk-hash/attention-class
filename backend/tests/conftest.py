@@ -15,11 +15,17 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from sqlalchemy.engine.url import make_url
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core.config import settings  # noqa: E402
+
+# Fail closed BEFORE touching any schema; these fixtures DROP/TRUNCATE all tables.
+# Production and demo databases must never be used for this destructive suite.
+if make_url(settings.TEST_DATABASE_URL).database != 'hospital_test':
+    raise RuntimeError('破坏性 MySQL 测试只允许数据库名 hospital_test')
 
 # 让整个应用（含 Alembic env.py）指向测试库
 settings.DATABASE_URL = settings.TEST_DATABASE_URL
@@ -55,7 +61,12 @@ def prepare_schema():
     from alembic.config import Config
 
     engine = get_engine()
+    if engine.dialect.name != 'mysql':
+        raise RuntimeError('正式测试套件必须使用隔离的 MySQL hospital_test')
     with engine.begin() as conn:
+        current_db = conn.execute(text('SELECT DATABASE()')).scalar_one()
+        if current_db != 'hospital_test':
+            raise RuntimeError(f'拒绝破坏性操作：当前数据库为 {current_db!r}')
         conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
         rows = conn.execute(
             text(

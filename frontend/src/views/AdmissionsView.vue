@@ -358,11 +358,11 @@ function fmt(value: string | null | undefined) {
       </select>
     </div>
     <div class="field">
-      <label>住院证编号</label>
+      <label>住院证编号 / 患者姓名</label>
       <input
         v-model="filters.keyword"
         class="input"
-        placeholder="模糊搜索"
+        placeholder="模糊搜索编号或姓名"
         @keyup.enter="changePage(1)"
       />
     </div>

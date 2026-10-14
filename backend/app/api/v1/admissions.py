@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import CurrentUser, DbSession, client_ip, require_roles, user_agent
@@ -82,7 +82,7 @@ def list_requests(
     priority: str | None = None,
     isolation_required: bool | None = None,
     patient_id: int | None = None,
-    keyword: str | None = Query(None, description="按住院证编号模糊搜索"),
+    keyword: str | None = Query(None, description="按住院证编号或患者姓名模糊搜索"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
 ):
@@ -104,7 +104,11 @@ def list_requests(
     if patient_id:
         stmt = stmt.where(AdmissionRequest.patient_id == patient_id)
     if keyword:
-        stmt = stmt.where(AdmissionRequest.certificate_no.like(f"%{keyword}%"))
+        like = f"%{keyword}%"
+        stmt = stmt.where(or_(
+            AdmissionRequest.certificate_no.like(like),
+            AdmissionRequest.patient_id.in_(select(Patient.id).where(Patient.name.like(like))),
+        ))
 
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = list(

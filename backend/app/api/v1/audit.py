@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import DbSession, require_roles
+from app.core.errors import BizError, ErrorCode
 from app.models.audit import AuditLog
 from app.models.enums import UserRole
 from app.schemas.common import Page
@@ -29,6 +32,8 @@ def list_audit_logs(
     object_type: str | None = None,
     object_id: str | None = None,
     result: str | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
 ):
@@ -43,6 +48,13 @@ def list_audit_logs(
         stmt = stmt.where(AuditLog.object_id == object_id)
     if result:
         stmt = stmt.where(AuditLog.result == result)
+
+    if start_at is not None:
+        stmt = stmt.where(AuditLog.created_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(AuditLog.created_at <= end_at)
+    if start_at is not None and end_at is not None and start_at > end_at:
+        raise BizError(ErrorCode.VALIDATION_ERROR, "开始时间不能晚于结束时间", 422)
 
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = list(

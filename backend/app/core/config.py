@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
+    # P2 辅助解释：默认只用确定性规则；外部模型默认禁用，
+    # 必须同时满足「后端开启 + 请求显式确认」才会真正外发（测试永不调用）。
+    ASSISTANT_EXTERNAL_ENABLED: bool = False
+    ASSISTANT_ENDPOINT: str = "https://api.openai.com/v1/chat/completions"
+    ASSISTANT_API_KEY: str = ""
+    ASSISTANT_MODEL: str = ""
+
     # 脱敏
     MASK_BY_DEFAULT: bool = True
 

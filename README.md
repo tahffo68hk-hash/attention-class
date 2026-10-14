@@ -176,8 +176,10 @@ docker compose exec backend python seed.py     # 写入演示数据
 | `/admissions` | 住院证与预登记 | 住院证列表（按科室 / 状态 / 优先级 / 隔离筛选，按编号搜索）、开具住院证、开具草稿、取消、预入院登记（模拟预交金） |
 | `/recommendations` | 床位推荐 | 选待入院住院证 → 推荐候选床、综合得分、五项评分明细、理由与提醒；一键采纳首位或按床位预占用；无床位时展示原因与硬约束统计 |
 | `/beds` | 床位管理 | 多维护筛选（科室 / 病房 / 状态 / 床型 / 隔离 / 性别限制 / 关键字）、状态流水查看、管理员手工调状态、清洁完成释放床位 |
-| `/allocations` | 分配与住院办理 | 分配记录列表、新建预占用（采纳推荐 / 人工选床）、办理入住、办理出院、取消预占用 |
-| `/audit` | 操作审计 | 审计日志（按操作人 / 动作 / 对象 / 结果筛选）、详情展开（仅管理员） |
+| `/allocations` | 分配与住院办理 | 分配记录列表、新建预占用（采纳推荐 / 人工选床，带 `Idempotency-Key` 防重）、办理入住、办理出院、取消预占用、**人工换床**（仅预占用状态） |
+| `/optimization` | 多患者联合排床 | 勾选 ≤30 名未分配待入院患者 → 贪心 vs 全局优化预览（只读不写）、净增可安排人数、逐项对照、实验指标、规则版方案解释 |
+| `/assistant` | 辅助决策解释 | 选住院证 + 合规候选床位 → 规则版可解释说明（五维评分证据表）；真实 AI 模式默认关闭且需显式确认 |
+| `/audit` | 操作审计 | 审计日志（按操作人 / 动作 / 对象 / 结果 / **时间范围**筛选）、详情展开（仅管理员） |
 | `/system-status` | 系统状态 | 前后端连通性与后端服务信息（`/health`、`/api/v1/system/info`） |
 
 页面只调用既有后端接口，**未改动任何核心业务规则、事务、状态机与数据库结构**；
@@ -193,18 +195,18 @@ docker compose exec backend python seed.py     # 写入演示数据
 
 ## 六、测试
 
+### 6.1 正式套件（真实 MySQL，`tests/`）
+
 ```powershell
 cd "E:\Attention is all you need\backend"
-python -m pytest -q
+python -m pytest -q tests
 ```
 
-**实际结果（2026-10-13，真实 MySQL 8.0.32 @ 127.0.0.1:3307 的 `hospital_test` 库）：**
+**实际结果（2026-10-14，真实 MySQL 8.0.32 @ 127.0.0.1:3307 的 `hospital_test` 库）：**
 
 ```
-44 passed, 1 warning in 73.00s
+51 passed, 1 warning in 32.47s
 ```
-
-覆盖范围：
 
 | 文件 | 用例 | 覆盖点 |
 | --- | --- | --- |
@@ -212,7 +214,32 @@ python -m pytest -q
 | `tests/test_recommendation.py` | 9 | 普通患者推荐、隔离要求不匹配（双向）、性别冲突、无空床、高优先级适配、优先级非线性验证 |
 | `tests/test_allocation_flow.py` | 13 | 人工调整、推荐确认、科室冲突、隔离不匹配、性别冲突、4 类非法状态流转、完整出入院闭环、取消回滚 |
 | `tests/test_concurrency.py` | 3 | **两个线程并发抢同一床位**（恰好一成功一失败）、唯一索引兜底、API 层冲突返回 |
+| `tests/test_m1_concurrency.py` | 5 | **双连接并发换床**、同住院证双床竞争、幂等键并发重放、失败者保有原床 |
+| `tests/test_p25_mysql_reliability.py` | 2 | **MySQL 并发换床至多一个成功**、绕过服务直写两条同申请活动分配被唯一索引拒绝 |
 | `tests/test_auth_audit.py` | 12 | 登录成功/失败留痕、缺失/非法令牌、越权 403 与审计、脱敏与明文权限、关键操作审计、看板 |
+
+`tests/conftest.py` 会 **DROP / TRUNCATE 测试库的全部表**，因此内置了 fail-closed 守卫：
+数据库名不是 `hospital_test` 或方言不是 MySQL 时，**在连接与删表之前**直接抛错。
+
+### 6.2 SQLite 侧行为测试（不需要 MySQL；`tests_m1_local` / `tests_p1p2` / `tests_p15` / `tests_p25`）
+
+```powershell
+cd backend
+python -m pytest -q tests_m1_local tests_p1p2 tests_p15 tests_p25
+```
+
+**实际结果：`74 passed`**（M1 顺序/回滚 11 + P0 扩展 5 + 补丁安全 2 + 评分修正 3 +
+P1 优化器 22 + P1/P2 集成 13 + P1.5 实验 5 + P2.5 API 闭环 4 + 测试库守卫 1 + 故障注入 8）。
+
+### 6.3 P1.5 合成排床实验
+
+```powershell
+python scripts/benchmark_matrix.py --output-dir docs/experiments/p15
+```
+
+**实际结果：81 个场景，贪心累计安排 1023、全局优化累计 1040**，与本仓库记录的
+`docs/experiments/p15/summary.json` 逐行一致（仅 CPU 耗时因机器而异）。
+数据全部为合成虚构患者与床位，不写数据库；结果仅说明实现差异，不代表临床效果。
 
 测试库通过 Alembic `upgrade head` 从零建表，因此**每次跑测试都在验证迁移脚本本身**。
 并发用例在**真实 MySQL**上执行，不使用 SQLite 的锁行为替代。
@@ -228,6 +255,10 @@ python -m pytest -q
 | [docs/isolation-bed-policy.md](docs/isolation-bed-policy.md) | 隔离床使用策略（显式文档化） |
 | [docs/m0-checklist.md](docs/m0-checklist.md) | M0 交付项与验收结果 |
 | [docs/FRONTEND.md](docs/FRONTEND.md) | 前端页面清单、调用契约与接口缺口登记 |
+| [docs/M1_PATCH_V05.md](docs/M1_PATCH_V05.md) | M1 v0.5 数据一致性补丁（唯一分配 / 幂等 / 原子换床） |
+| [docs/DELIVERY_CHANGELOG.md](docs/DELIVERY_CHANGELOG.md) | G1/G3/G4/G7 与成本敏感度修复清单 |
+| [docs/P1_P2_IMPLEMENTATION.md](docs/P1_P2_IMPLEMENTATION.md) | P1 联合排床优化 + P2 辅助解释的实现与边界 |
+| [docs/P15_P25_IMPLEMENTATION.md](docs/P15_P25_IMPLEMENTATION.md) | P1.5 合成实验 + P2.5 可靠性覆盖与验收边界 |
 | [CORE_COMPARISON.md](CORE_COMPARISON.md) | ChatGPT P0 核心包与现有项目的差异对比（含待确认决策点） |
 
 ## 八、接口一览

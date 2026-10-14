@@ -1,0 +1,71 @@
+{
+  "dataset": "SYNTHETIC_ONLY",
+  "clinical_validation": false,
+  "score_origin": "existing H1-H4 and five-dimensional functions",
+  "objective": "lexicographic(admitted,priority_sum,score_sum)",
+  "number_of_cases": 81,
+  "total_greedy_admitted": 1023,
+  "total_exact_admitted": 1040,
+  "cases_admission_improved": 14,
+  "cases_priority_improved_with_equal_admissions": 7,
+  "greedy_time_ms_median": 0.108,
+  "greedy_time_ms_p95": 0.568,
+  "exact_time_ms_median": 1.021,
+  "exact_time_ms_p95": 10.426,
+  "by_supply_isolation": {
+    "supply=0.65,isolation=0.10": {
+      "cases": 9,
+      "average_admitted_gain": 0,
+      "average_exact_fill_rate": 0.822,
+      "exact_ms_p95": 5.572
+    },
+    "supply=0.65,isolation=0.35": {
+      "cases": 9,
+      "average_admitted_gain": 0.222,
+      "average_exact_fill_rate": 0.761,
+      "exact_ms_p95": 5.952
+    },
+    "supply=0.65,isolation=0.60": {
+      "cases": 9,
+      "average_admitted_gain": 0.222,
+      "average_exact_fill_rate": 0.744,
+      "exact_ms_p95": 4.312
+    },
+    "supply=1.00,isolation=0.10": {
+      "cases": 9,
+      "average_admitted_gain": 0.222,
+      "average_exact_fill_rate": 0.7,
+      "exact_ms_p95": 9.476
+    },
+    "supply=1.00,isolation=0.35": {
+      "cases": 9,
+      "average_admitted_gain": 0.333,
+      "average_exact_fill_rate": 0.7,
+      "exact_ms_p95": 7.828
+    },
+    "supply=1.00,isolation=0.60": {
+      "cases": 9,
+      "average_admitted_gain": 0.222,
+      "average_exact_fill_rate": 0.69,
+      "exact_ms_p95": 6.716
+    },
+    "supply=1.40,isolation=0.10": {
+      "cases": 9,
+      "average_admitted_gain": 0.333,
+      "average_exact_fill_rate": 0.621,
+      "exact_ms_p95": 10.863
+    },
+    "supply=1.40,isolation=0.35": {
+      "cases": 9,
+      "average_admitted_gain": 0.333,
+      "average_exact_fill_rate": 0.609,
+      "exact_ms_p95": 17.303
+    },
+    "supply=1.40,isolation=0.60": {
+      "cases": 9,
+      "average_admitted_gain": 0,
+      "average_exact_fill_rate": 0.613,
+      "exact_ms_p95": 15.501
+    }
+  }
+}

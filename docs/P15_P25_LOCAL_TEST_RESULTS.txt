@@ -1,0 +1,8 @@
+2026-10-14 | P1.5 / P2.5 source candidate (Linux container)
+Base: Attention_is_all_you_need_P1_P2_Optimized_v1.1_Full_Source.zip
+Command: cd backend && PYTHONPATH=. pytest -q tests_m1_local tests_p1p2 tests_p15 tests_p25
+Result: 74 passed in 5.02s
+P1.5 CLI: python scripts/benchmark_matrix.py --output-dir docs/experiments/p15
+Result: 81 scenarios, greedy 1023, exact 1040, exact ms median 1.021, p95 10.426 (CPU-only, synthetic)
+Other gates: MySQL 44+new parallel tests NOT RUN; frontend browser E2E NOT RUN; npm build NOT RUN; Docker NOT RUN.
+Data: synthetic only. No external API calls, no local Windows E: modification, no remote git push.

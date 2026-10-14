@@ -1,0 +1,8 @@
+2026-10-14, local container, Python 3.13.5
+Command: cd backend && python -m pytest -q tests_m1_local tests_p1p2
+Result: 56 passed in 2.95s
+Command: cd backend && python -m compileall -q app
+Result: PASS
+OpenAPI paths: 36; P1 preview and two P2 assistant endpoints present
+Patch dry run: all six modified Python files apply to v1.0 full source
+MySQL/Windows/browser/Compose/real model calls: NOT RUN

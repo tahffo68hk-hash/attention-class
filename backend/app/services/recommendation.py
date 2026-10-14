@@ -89,7 +89,7 @@ class PriorityProfile:
 
     distance_mode: str          # "near"（越近越好） / "far"（让出近端）
     distance_sensitivity: float  # near 模式下的惩罚倍率
-    cost_sensitivity: float      # 0-1，越大越在意费用
+    cost_sensitivity: float      # 0-1，越大对高费用的惩罚越明显
     floor_bonus: float           # 低楼层加分（-1/1 层）
     label: str
 
@@ -170,7 +170,7 @@ def _score_cost(rate: Decimal, low: Decimal, high: Decimal, profile: PriorityPro
         cheapness = 100.0
     else:
         cheapness = 100.0 * float((high - rate) / (high - low))
-    raw = _clamp(100.0 - (100.0 - cheapness) * (1.0 - profile.cost_sensitivity))
+    raw = _clamp(100.0 - (100.0 - cheapness) * profile.cost_sensitivity)
     note = (
         f"日费用 ¥{rate:.2f}（候选区间 ¥{low:.2f}-¥{high:.2f}），"
         f"{profile.label}患者成本敏感度 {profile.cost_sensitivity:.2f}，得分 {raw:.1f}"
@@ -302,7 +302,7 @@ def _build_no_result_reasons(
 def recommend_beds(
     db: Session,
     request: AdmissionRequest,
-    limit: int = 10,
+    limit: int | None = 10,
 ) -> RecommendationResponse:
     """对住院证生成可解释的床位推荐列表。"""
     candidates, stats = scan_candidates(db, request)
@@ -417,7 +417,10 @@ def recommend_beds(
         )
 
     results.sort(key=lambda r: (-r.score, r.distance, r.bed_id))
-    results = results[:limit]
+    if limit is not None:
+        if limit < 0:
+            raise ValueError("推荐条数限制不得为负数")
+        results = results[:limit]
 
     return RecommendationResponse(
         admission_request_id=request.id,

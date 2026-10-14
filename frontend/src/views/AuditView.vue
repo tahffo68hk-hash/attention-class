@@ -46,6 +46,8 @@ const filters = reactive({
   action: '',
   object_type: '',
   result: '',
+  start_at: '',
+  end_at: '',
 })
 
 const page = ref(1)
@@ -57,6 +59,10 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
+    if (filters.start_at && filters.end_at && filters.start_at > filters.end_at) {
+      errorMessage.value = '开始时间不能晚于结束时间'
+      return
+    }
     const data = await fetchAuditLogs({
       page: page.value,
       page_size: pageSize.value,
@@ -64,6 +70,8 @@ async function load() {
       action: filters.action || undefined,
       object_type: filters.object_type || undefined,
       result: filters.result || undefined,
+      start_at: filters.start_at || undefined,
+      end_at: filters.end_at || undefined,
     })
     rows.value = data.items
     total.value = data.total
@@ -84,6 +92,8 @@ function resetFilters() {
   filters.action = ''
   filters.object_type = ''
   filters.result = ''
+  filters.start_at = ''
+  filters.end_at = ''
   applyFilters()
 }
 
@@ -148,6 +158,14 @@ onMounted(load)
           <option value="SUCCESS">成功</option>
           <option value="FAILURE">失败</option>
         </select>
+      </div>
+      <div class="field">
+        <label>开始时间</label>
+        <input v-model="filters.start_at" class="input" type="datetime-local" @change="applyFilters" />
+      </div>
+      <div class="field">
+        <label>结束时间</label>
+        <input v-model="filters.end_at" class="input" type="datetime-local" @change="applyFilters" />
       </div>
     </div>
     <div class="toolbar" style="margin-bottom: 0">

@@ -11,6 +11,7 @@ from app.models.admission import AdmissionRequest
 from app.models.allocation import BedAllocation, BedStatusLog
 from app.models.enums import AllocationStatus, UserRole
 from app.models.facility import Bed
+from app.models.user import User
 from app.models.patient import Patient
 from app.schemas.allocation import (
     AllocationCreate,
@@ -221,26 +222,27 @@ def release(
     summary="床位状态流水（每次状态变化都留痕）",
 )
 def bed_status_logs(bed_id: int, db: DbSession, user: CurrentUser, limit: int = Query(50, ge=1, le=200)):
-    rows = list(
-        db.execute(
-            select(BedStatusLog)
-            .where(BedStatusLog.bed_id == bed_id)
-            .order_by(BedStatusLog.id.desc())
-            .limit(limit)
-        ).scalars()
-    )
+    # 直接关联床位与操作者，修复 G1：原 API 总是返回 null。
+    rows = db.execute(
+        select(BedStatusLog, Bed.code, User.full_name)
+        .join(Bed, Bed.id == BedStatusLog.bed_id)
+        .outerjoin(User, User.id == BedStatusLog.operator_id)
+        .where(BedStatusLog.bed_id == bed_id)
+        .order_by(BedStatusLog.id.desc())
+        .limit(limit)
+    ).all()
     return [
         BedStatusLogRead(
             id=log.id,
             bed_id=log.bed_id,
-            bed_code=None,
+            bed_code=bed_code,
             from_status=str(log.from_status) if log.from_status else None,
             to_status=str(log.to_status),
             reason=log.reason,
             allocation_id=log.allocation_id,
             admission_request_id=log.admission_request_id,
-            operator_name=None,
+            operator_name=operator_name or "系统操作",
             created_at=log.created_at,
         )
-        for log in rows
+        for log, bed_code, operator_name in rows
     ]

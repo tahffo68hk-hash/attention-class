@@ -14,6 +14,8 @@ const navItems = [
   { name: 'recommendations', path: '/recommendations', label: '床位推荐' },
   { name: 'beds', path: '/beds', label: '床位管理' },
   { name: 'allocations', path: '/allocations', label: '分配与住院办理' },
+  { name: 'optimization', path: '/optimization', label: '多患者联合排床' },
+  { name: 'assistant', path: '/assistant', label: '辅助决策解释' },
   { name: 'audit', path: '/audit', label: '操作审计' },
   { name: 'system-status', path: '/system-status', label: '系统状态' },
 ]

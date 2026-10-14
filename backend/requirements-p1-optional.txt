@@ -1,0 +1,2 @@
+# Optional alternative solver. Exact min-cost-flow works without this extra.
+ortools>=9.10
