@@ -11,11 +11,17 @@ import {
   explainPlan,
   fetchAllocations,
   fetchOptimizationPreview,
+  fetchProviderStatus,
   fetchQueue,
 } from '@/api/business'
 import { ApiError } from '@/api/http'
 import { useAuth } from '@/stores/auth'
-import type { OptimizationPreviewOut, PlanExplainOut, PreadmissionRead } from '@/api/types'
+import type {
+  OptimizationPreviewOut,
+  PlanExplainOut,
+  PreadmissionRead,
+  ProviderStatus,
+} from '@/api/types'
 
 const MAX_SELECTION = 30
 
@@ -28,10 +34,20 @@ const selected = ref<number[]>([])
 const preview = ref<OptimizationPreviewOut | null>(null)
 const plan = ref<PlanExplainOut | null>(null)
 
+/** P4：方案解释方式与一次性确认；DeepSeek 默认关闭，须服务端启用 + 本次确认。 */
+const planMode = ref<'rules' | 'llm'>('rules')
+const planConsent = ref(false)
+const providerStatus = ref<ProviderStatus | null>(null)
+
 const loading = ref(false)
 const previewing = ref(false)
 const explaining = ref(false)
 const errorMessage = ref('')
+
+/** 真实 AI 方案解释的门槛：服务端已启用 且 本次已勾选确认。 */
+const planLlmBlocked = computed(
+  () => planMode.value === 'llm' && (!planConsent.value || !providerStatus.value?.enabled),
+)
 
 async function load() {
   loading.value = true
@@ -101,7 +117,10 @@ async function runExplainPlan() {
   explaining.value = true
   errorMessage.value = ''
   try {
-    plan.value = await explainPlan(selected.value)
+    plan.value = await explainPlan(selected.value, {
+      mode: planMode.value,
+      confirmExternalCall: planMode.value === 'llm' && planConsent.value,
+    })
   } catch (err) {
     errorMessage.value = err instanceof ApiError ? `[${err.code}] ${err.message}` : '生成方案解释失败'
   } finally {
@@ -134,7 +153,15 @@ const pairRows = computed(() => {
   }))
 })
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  try {
+    providerStatus.value = await fetchProviderStatus()
+  } catch {
+    // 旧后端无该接口时静默降级为「仅规则版」。
+    providerStatus.value = null
+  }
+})
 </script>
 
 <template>
@@ -247,18 +274,49 @@ onMounted(load)
     </div>
 
     <div class="card">
-      <div class="card__title">方案说明（确定性规则 / 非 AI）</div>
+      <div class="card__title">方案解释</div>
+      <p class="note">
+        只解释当前计算快照，不执行分配、也不修改求解目标。真实 DeepSeek 仅接收聚合统计数据
+        （成功人数、优先级总和、评分总和、算法名称），不发送住院证 ID、床位 ID 或患者姓名。
+      </p>
       <div class="toolbar">
-        <button class="btn" :disabled="explaining || !selected.length" @click="runExplainPlan">
+        <div class="field">
+          <label>解释方式</label>
+          <select v-model="planMode" class="select" @change="plan = null; planConsent = false">
+            <option value="rules">确定性规则（免费、非 AI）</option>
+            <option value="llm">DeepSeek AI 草稿（需确认）</option>
+          </select>
+        </div>
+        <button
+          class="btn"
+          :disabled="explaining || !selected.length || planLlmBlocked"
+          @click="runExplainPlan"
+        >
           {{ explaining ? '生成中…' : '生成方案解释' }}
         </button>
+        <span v-if="planLlmBlocked" class="note">
+          {{ providerStatus?.enabled ? '请先勾选本次确认' : 'DeepSeek 未启用，请改用规则解释' }}
+        </span>
       </div>
+      <label v-if="planMode === 'llm'" class="checkbox" style="margin-top: 12px">
+        <input v-model="planConsent" type="checkbox" />
+        我确认此次 DeepSeek 调用可能产生费用，输出必须人工复核；服务状态：{{
+          providerStatus?.enabled ? '已启用' : '未启用'
+        }}
+      </label>
       <template v-if="plan">
+        <p>
+          <strong>{{ plan.real_ai ? 'DeepSeek AI 草稿 · 待人工复核' : '确定性规则说明 · 非 AI' }}</strong>
+        </p>
         <p>{{ plan.explanation }}</p>
         <p v-for="note in plan.recommendations" :key="note" class="note">• {{ note }}</p>
         <p class="note">
           已安排 {{ plan.assigned_count }} 人（贪心 {{ plan.baseline_assigned_count }} 人）·
-          未匹配 {{ plan.unmatched_request_ids.length }} 人 · 需要人工复核 · 未执行任何分配
+          未匹配 {{ plan.unmatched_request_ids.length }} 人 ·
+          模型 {{ plan.model || '无' }} ·
+          Token {{ plan.input_tokens ?? '—' }} / {{ plan.output_tokens ?? '—' }} ·
+          费用估算 {{ plan.cost_estimate_cny === null ? '未配置费率' : `¥${plan.cost_estimate_cny}` }} ·
+          时延 {{ plan.latency_ms ?? '—' }} ms · 未执行任何分配
         </p>
       </template>
     </div>

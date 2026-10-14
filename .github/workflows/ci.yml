@@ -33,7 +33,7 @@ jobs:
         run: python -m pytest -q tests
       - name: Test P1/P2 optimization and explanation (SQLite, no external AI)
         working-directory: backend
-        run: python -m pytest -q tests_p1p2 tests_p15 tests_p25
+        run: python -m pytest -q tests_p1p2 tests_p15 tests_p25 tests_p4
       - name: Run isolated SQLite behavioral tests
         working-directory: backend
         run: python -m pytest -q tests_m1_local

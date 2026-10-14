@@ -32,14 +32,29 @@ class ExplainOut(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
+    cost_estimate_cny: float | None = None
     latency_ms: float | None = None
     review_required: bool = True
     performed_allocation: bool = False
+
+class PlanExplainIn(BaseModel):
+    admission_request_ids: list[int] = Field(min_length=1, max_length=30)
+    mode: Literal["rules", "llm"] = "rules"
+    confirm_external_call: bool = False
+
 
 class PlanExplainOut(BaseModel):
     version: str = "global-plan-explanation-v1"
     provider: str = "deterministic_rules"
     real_ai: bool = False
+    externally_sent: bool = False
+    status: str = "RULES_ONLY"
+    model: str | None = None
+    prompt_version: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_estimate_cny: float | None = None
+    latency_ms: float | None = None
     preview_only: bool = True
     explanation: str
     recommendations: list[str]

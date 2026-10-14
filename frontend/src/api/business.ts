@@ -22,6 +22,7 @@ import type {
   PlanExplainOut,
   PreadmissionCreate,
   PreadmissionRead,
+  ProviderStatus,
   RecommendationResponse,
   WardRead,
 } from './types'
@@ -277,11 +278,21 @@ export async function explainBed(payload: {
   return data
 }
 
-/** 联合排床方案说明（确定性规则、非 AI、无写入）。 */
-export async function explainPlan(admissionRequestIds: number[]): Promise<PlanExplainOut> {
+/** 联合排床方案说明：默认确定性规则；`mode='llm'` 需服务端启用且本次显式确认。 */
+export async function explainPlan(
+  admissionRequestIds: number[],
+  options?: { mode?: 'rules' | 'llm'; confirmExternalCall?: boolean },
+): Promise<PlanExplainOut> {
   const { data } = await http.post<PlanExplainOut>('/api/v1/assistant/explain-plan', {
     admission_request_ids: admissionRequestIds,
-    solver: 'auto',
+    mode: options?.mode ?? 'rules',
+    confirm_external_call: options?.confirmExternalCall ?? false,
   })
+  return data
+}
+
+/** P4：DeepSeek 服务状态。只返回是否启用、模型名与是否需要确认，永不返回密钥。 */
+export async function fetchProviderStatus(): Promise<ProviderStatus> {
+  const { data } = await http.get<ProviderStatus>('/api/v1/assistant/provider-status')
   return data
 }

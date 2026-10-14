@@ -418,6 +418,8 @@ export interface ExplainOut {
   input_tokens: number | null
   output_tokens: number | null
   cost_usd: number | null
+  /** P4：人民币费用估算（未配置费率时为 null，不是官方账单）。 */
+  cost_estimate_cny: number | null
   latency_ms: number | null
   review_required: boolean
   performed_allocation: boolean
@@ -427,6 +429,14 @@ export interface PlanExplainOut {
   version: string
   provider: string
   real_ai: boolean
+  externally_sent: boolean
+  status: string
+  model: string | null
+  prompt_version: string | null
+  input_tokens: number | null
+  output_tokens: number | null
+  cost_estimate_cny: number | null
+  latency_ms: number | null
   preview_only: boolean
   explanation: string
   recommendations: string[]
@@ -434,4 +444,14 @@ export interface PlanExplainOut {
   unmatched_request_ids: number[]
   baseline_assigned_count: number
   review_required: boolean
+}
+
+/** P4：DeepSeek 服务状态（永不包含密钥）。 */
+export interface ProviderStatus {
+  provider: string
+  model: string
+  enabled: boolean
+  real_call_requires_confirmation: boolean
+  default_mode: string
+  no_live_call: boolean
 }

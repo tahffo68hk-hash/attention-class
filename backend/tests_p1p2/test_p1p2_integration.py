@@ -105,34 +105,27 @@ def test_prompt_minimization_omits_sensitive_identifiers():
         assert field not in payload
 
 
-def test_external_adapter_with_fake_http_client_only(synthetic,monkeypatch):
+def test_deepseek_adapter_with_mocked_provider_only(synthetic, monkeypatch):
+    """P4 replaces legacy generic provider and keeps this test network-free."""
+    from app.services.deepseek_provider import DeepSeekResult
+    import app.services.assistant_explanation as adapter
     db,ids=synthetic
     bed=db.scalars(select(Bed)).first()
-    monkeypatch.setattr(settings,'ASSISTANT_EXTERNAL_ENABLED',True)
-    monkeypatch.setattr(settings,'ASSISTANT_API_KEY','fake-key')
-    monkeypatch.setattr(settings,'ASSISTANT_MODEL','fake-model')
-    import app.services.assistant_explanation as adapter
-    captured=[]
-    class FakeResponse:
-        def raise_for_status(self): pass
-        def json(self):return {'choices':[{'message':{'content':'{"explanation":"这是模拟分数解释","cautions":["仅供模拟"]}'}}], 'usage':{'prompt_tokens':100,'completion_tokens':20}}
-    class FakeClient:
-        def __init__(self,**kwargs):pass
-        def __enter__(self):return self
-        def __exit__(self,*args):return False
-        def post(self,url,headers,json):
-            captured.append(json)
-            return FakeResponse()
-    monkeypatch.setattr(adapter.httpx,'Client',FakeClient)
-    try:
-        resp=explain(db,ids[0],bed.id,mode='llm',confirm_external_call=True)
-    finally:
-        monkeypatch.setattr(settings,'ASSISTANT_EXTERNAL_ENABLED',False)
-    assert resp.real_ai and resp.externally_sent and resp.input_tokens==100
-    assert resp.cost_usd is None and resp.review_required
-    prompt = captured[0]['messages'][1]['content']
-    assert '模拟患者甲' not in prompt and 'SIM-CERT' not in prompt and 'BED-' not in prompt
-
+    monkeypatch.setattr(settings,'DEEPSEEK_EXTERNAL_ENABLED',True)
+    monkeypatch.setattr(settings,'DEEPSEEK_API_KEY','fake-test-token')
+    payloads=[]
+    def fake_generate(kind,payload):
+        payloads.append(payload)
+        assert kind=='bed'
+        return DeepSeekResult('真实 DeepSeek 说明草稿',['仅供模拟'],
+                              {'prompt_tokens':100,'completion_tokens':20},3.5,
+                              'deepseek-flash',None)
+    monkeypatch.setattr(adapter,'generate',fake_generate)
+    resp=explain(db,ids[0],bed.id,mode='llm',confirm_external_call=True)
+    assert resp.provider=='deepseek' and resp.real_ai and resp.externally_sent
+    assert resp.input_tokens==100 and resp.model=='deepseek-flash' and resp.review_required
+    blob=str(payloads[0])
+    assert '模拟患者甲' not in blob and 'SIM-CERT' not in blob and 'BED-' not in blob
 
 def test_new_paths_have_schemas():
     from app.main import app
@@ -209,3 +202,28 @@ def test_preview_rejects_more_than_100_real_candidates_without_truncating(synthe
         preview(db, ids, solver='flow')
     assert exc.value.status_code == 422
     assert db.scalar(select(func.count(BedAllocation.id))) == 0
+
+
+def test_deepseek_global_plan_only_gets_anonymous_aggregates(synthetic, monkeypatch):
+    from app.services.deepseek_provider import DeepSeekResult
+    import app.services.assistant_explanation as adapter
+    db,ids=synthetic
+    seen=[]
+    def mock_llm(kind,payload):
+        seen.append((kind,payload))
+        return DeepSeekResult('调度汇总说明',['仅供演示'],
+                              {'prompt_tokens':30,'completion_tokens':15},2.0,
+                              'deepseek-flash',None)
+    monkeypatch.setattr(adapter,'generate',mock_llm)
+    with pytest.raises(BizError):
+        adapter.explain_plan(db,ids,mode='llm',confirm_external_call=False)
+    assert seen==[]
+    output=adapter.explain_plan(db,ids,mode='llm',confirm_external_call=True)
+    assert output.real_ai and output.provider=='deepseek' and output.review_required
+    assert output.assigned_count==2 and len(seen)==1
+    kind,payload=seen[0]
+    assert kind=='plan'
+    blob=str(payload)
+    assert 'SIM-CERT' not in blob and 'admission_request_ids' not in blob
+    assert 'bed_id' not in blob and 'patient' not in blob
+    assert db.scalar(select(func.count(BedAllocation.id)))==0

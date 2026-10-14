@@ -5,17 +5,24 @@
  * 默认走确定性规则说明（不调用任何外部模型）；「真实 AI」模式需要服务端开关
  * 与请求显式确认同时成立，本演示环境两者都未开启。
  */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import {
   explainBed,
   fetchAllocations,
+  fetchProviderStatus,
   fetchQueue,
   fetchRecommendations,
 } from '@/api/business'
 import { ApiError } from '@/api/http'
 import { useAuth } from '@/stores/auth'
-import type { BedRecommendation, EvidenceScore, ExplainOut, PreadmissionRead } from '@/api/types'
+import type {
+  BedRecommendation,
+  EvidenceScore,
+  ExplainOut,
+  PreadmissionRead,
+  ProviderStatus,
+} from '@/api/types'
 
 const { canOperateAllocation } = useAuth()
 
@@ -26,6 +33,11 @@ const requestId = ref<number | ''>('')
 const bedId = ref<number | ''>('')
 const mode = ref<'rules' | 'llm'>('rules')
 const consent = ref(false)
+/** P4：DeepSeek 服务端状态（是否启用/模型名）。默认未启用时不允许发起真实调用。 */
+const providerStatus = ref<ProviderStatus | null>(null)
+
+/** 真实 AI 只有在「服务端已启用」且「本次已勾选确认」时才允许点击。 */
+const llmBlocked = computed(() => mode.value === 'llm' && (!consent.value || !providerStatus.value?.enabled))
 
 const result = ref<ExplainOut | null>(null)
 const loadingQueue = ref(false)
@@ -119,6 +131,12 @@ async function run() {
 onMounted(async () => {
   await loadQueue()
   await loadBeds()
+  try {
+    providerStatus.value = await fetchProviderStatus()
+  } catch {
+    // 旧后端没有该接口时，前端仍可正常使用规则解释；此处静默降级。
+    providerStatus.value = null
+  }
 })
 </script>
 
@@ -129,8 +147,14 @@ onMounted(async () => {
   <div v-if="errorMessage" class="alert alert--danger">{{ errorMessage }}</div>
 
   <div class="alert alert--warn">
-    默认是<strong>确定性规则说明</strong>，不是大模型生成。真实模型模式由后端默认关闭，
-    本演示环境也没有任何已授权的付费调用；内容仅用于虚构病例的课程演示，不可用于真实临床决策。
+    默认是<strong>确定性规则说明</strong>，不是大模型生成。DeepSeek 真实 API 只在服务端启用、
+    且本次勾选确认后才会调用；本演示环境没有任何已授权的付费调用。内容仅用于虚构病例的课程演示，
+    不可用于真实临床决策。
+  </div>
+
+  <div class="alert alert--info">
+    DeepSeek 服务状态：{{ providerStatus?.enabled ? '已启用（仅点击并确认后才会调用）' : '未启用或未配置密钥' }}
+    · 模型 {{ providerStatus?.model || 'deepseek-flash' }} · API 密钥仅保存在后端，不进入前端请求。
   </div>
 
   <div class="card">
@@ -157,7 +181,7 @@ onMounted(async () => {
         <label>说明方式</label>
         <select v-model="mode" class="select">
           <option value="rules">确定性规则说明（默认、免费）</option>
-          <option value="llm">真实 AI 生成（需服务端配置并另行确认）</option>
+          <option value="llm">DeepSeek 实时生成（可能产生费用）</option>
         </select>
       </div>
     </div>
@@ -174,14 +198,15 @@ onMounted(async () => {
     <div class="toolbar" style="margin-bottom: 0">
       <button
         class="btn btn--primary"
-        :disabled="
-          !canOperateAllocation || busy || !requestId || !bedId || (mode === 'llm' && !consent)
-        "
+        :disabled="!canOperateAllocation || busy || !requestId || !bedId || llmBlocked"
         @click="run"
       >
         {{ busy ? '生成中…' : '生成解释预览' }}
       </button>
       <span class="note">仅 ADMIN / NURSE 可调用；本操作不写入分配记录。</span>
+      <span v-if="llmBlocked" class="note">
+        {{ providerStatus?.enabled ? '请先勾选本次确认' : 'DeepSeek 未启用，请改用规则说明' }}
+      </span>
     </div>
   </div>
 
@@ -227,8 +252,11 @@ onMounted(async () => {
       <p class="note">
         规则版本 {{ result.version }} · 提示版本 {{ result.prompt_version || '无（规则版）' }} ·
         真实 AI {{ result.real_ai ? '是' : '否' }} · 是否外发 {{ result.externally_sent ? '是' : '否' }} ·
+        模型 {{ result.model || '—' }} ·
         token {{ result.input_tokens ?? '未知' }} / {{ result.output_tokens ?? '未知' }} ·
-        成本 {{ result.cost_usd === null ? '未知或未产生' : `$${result.cost_usd}` }}
+        费用估算
+        {{ result.cost_estimate_cny === null ? '未配置估算费率' : `¥${result.cost_estimate_cny}` }} ·
+        时延 {{ result.latency_ms ?? '—' }} ms
       </p>
     </div>
   </template>
