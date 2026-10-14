@@ -1,0 +1,22 @@
+==========================================================================
+凭据轮换验证（仅指纹，无明文）
+==========================================================================
+
+[1] 旧口令（来自公开历史）必须已失效
+   root          旧口令(指纹 d41ca9b3ff93) → ✅ 已失效（OperationalError）
+   hospital_app  旧口令(指纹 1c954a13edbe) → ✅ 已失效（OperationalError）
+
+[2] 新口令（来自 gitignored backend/.env）必须可用
+   hospital_app 新口令(指纹 237066bcb1c3) → ✅ 可连接
+   root          新口令(指纹 e79fbb98b372) → ✅ 可连接
+
+[3] JWT：旧公开密钥签发的令牌必须被拒绝
+   旧 SECRET_KEY 指纹 0fc6b32a6011 / 当前指纹 770314790d98 → 是否相同: False
+   旧公开密钥签发 → REJECTED(InvalidSignatureError)
+   当前密钥签发 → ACCEPTED
+
+[4] 应用配置链路：读 settings 并真实查询一次
+   DATABASE_URL 连接成功：beds=44 行 / MySQL 8.0.32
+   DATABASE_URL 中是否仍含占位符: False
+
+结论：旧凭据全部失效、新凭据可用；跟踪文件不含可用凭据。

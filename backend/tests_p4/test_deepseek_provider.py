@@ -107,3 +107,38 @@ def test_sensitive_or_unknown_fields_blocked_before_network(monkeypatch, kind, c
     with pytest.raises(BizError) as e:
         ds.generate(kind, content, transport=httpx.MockTransport(lambda req:calls.append(req)))
     assert e.value.status_code==422 and not calls
+
+
+# --------------------------------------------------------------------------- #
+# provider 响应 id 解析（对账用）
+# --------------------------------------------------------------------------- #
+def test_request_id_parsed_when_present(monkeypatch):
+    enable(monkeypatch)
+    env={**envelope(),'id':'chatcmpl-abc-123_XYZ.9'}
+    out=ds.generate('bed',{},transport=httpx.MockTransport(lambda req:httpx.Response(200,json=env)))
+    assert out.request_id=='chatcmpl-abc-123_XYZ.9'
+
+def test_request_id_missing_is_none_and_does_not_fail(monkeypatch):
+    enable(monkeypatch)
+    env=dict(envelope()); env.pop('id',None)
+    out=ds.generate('bed',{},transport=httpx.MockTransport(lambda req:httpx.Response(200,json=env)))
+    assert out.request_id is None and out.explanation
+
+@pytest.mark.parametrize('raw', [
+    '', ' ', 123, None, {'a':1}, ['x'],
+    'has space', 'newline\nhere', 'Bearer sk-live-secret',   # 空格/换行/密钥形态一律拒绝
+    'x'*129,                                                  # 超长拒绝
+])
+def test_unsafe_request_id_dropped(monkeypatch, raw):
+    enable(monkeypatch)
+    env={**envelope(),'id':raw}
+    out=ds.generate('bed',{},transport=httpx.MockTransport(lambda req:httpx.Response(200,json=env)))
+    assert out.request_id is None
+
+def test_unsafe_request_id_never_leaks_into_result(monkeypatch):
+    """把密钥塞进 id 时，绝不能出现在返回对象里。"""
+    enable(monkeypatch)
+    leak='sk-LIVE-SECRET-TOKEN-9999'
+    env={**envelope(),'id':f'Bearer {leak}'}
+    out=ds.generate('bed',{},transport=httpx.MockTransport(lambda req:httpx.Response(200,json=env)))
+    assert out.request_id is None and leak not in repr(out)

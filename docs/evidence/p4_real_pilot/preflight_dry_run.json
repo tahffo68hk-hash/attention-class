@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-10-14T14:08:40.725697+08:00",
+  "generated_at": "2026-10-14T14:36:21.166777+08:00",
   "pilot_id": "P4PILOT-20261014T140727+0800",
   "real_network_requests": 0,
   "budget_cny": 0.5,
-  "worst_case_total_cny": 0.012292,
+  "worst_case_total_cny": 0.012286,
   "rates_cny_per_m": {
     "miss": 2.0,
     "hit": 0.04,
@@ -62,14 +62,14 @@
           true
         ]
       ],
-      "messages_bytes": 1169,
+      "messages_bytes": 1167,
       "whitelist": {
         "kind": "bed_explanation",
         "teaching_only": true,
         "priority_rank": 2,
         "requires_isolation": false,
         "bed_type": "NORMAL",
-        "final_score": 88.24,
+        "final_score": 79.24,
         "warning_count": 0,
         "score_dimensions": [
           {
@@ -84,8 +84,8 @@
           },
           {
             "key": "ward_balance",
-            "raw_score": 100.0,
-            "contribution": 18.0
+            "raw_score": 50.0,
+            "contribution": 9.0
           },
           {
             "key": "cost",
@@ -99,13 +99,13 @@
           }
         ]
       },
-      "whitelist_sha256": "1e52af013ae42083a47d4efd376a7dfa8305792cc5815dda03492c1328f073c0",
-      "worst_case_cny": 0.006338,
+      "whitelist_sha256": "9e27e6db1f111ae700ac0156a79da784066251ea7885c8cc327f09b35b00527f",
+      "worst_case_cny": 0.006334,
       "meta": {
         "source": "recommend_beds(limit=None) 的真实（虚构）评分结果",
         "priority_rank": 2,
-        "candidate_count": 6,
-        "final_score": 88.24,
+        "candidate_count": 4,
+        "final_score": 79.24,
         "dimensions": [
           {
             "key": "distance",
@@ -119,8 +119,8 @@
           },
           {
             "key": "ward_balance",
-            "raw_score": 100.0,
-            "contribution": 18.0
+            "raw_score": 50.0,
+            "contribution": 9.0
           },
           {
             "key": "cost",
@@ -187,34 +187,34 @@
           true
         ]
       ],
-      "messages_bytes": 977,
+      "messages_bytes": 976,
       "whitelist": {
         "kind": "aggregate_bed_allocation_preview",
         "teaching_only": true,
-        "request_count": 3,
-        "candidate_edges": 15,
+        "request_count": 2,
+        "candidate_edges": 7,
         "admitted_gain": 0,
         "greedy": {
-          "admitted": 3,
-          "priority_sum": 8,
-          "score_sum": 235.07
+          "admitted": 2,
+          "priority_sum": 4,
+          "score_sum": 161.29
         },
         "optimized": {
-          "admitted": 3,
-          "priority_sum": 8,
-          "score_sum": 235.07,
+          "admitted": 2,
+          "priority_sum": 4,
+          "score_sum": 161.29,
           "method": "exact_min_cost_flow",
           "proven_optimal": true
         }
       },
-      "whitelist_sha256": "845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a",
-      "worst_case_cny": 0.005954,
+      "whitelist_sha256": "ffd3ef45cf8bfd2c954c3eb09834798671373088ad6dcb0bd0be4577e3bb30d4",
+      "worst_case_cny": 0.005952,
       "meta": {
         "source": "optimization_preview.preview(solver='auto') 的真实（合成）计算结果",
-        "request_count": 3,
-        "candidate_edges": 15,
-        "greedy_admitted": 3,
-        "optimized_admitted": 3,
+        "request_count": 2,
+        "candidate_edges": 7,
+        "greedy_admitted": 2,
+        "optimized_admitted": 2,
         "optimized_method": "exact_min_cost_flow",
         "proven_optimal": true
       }

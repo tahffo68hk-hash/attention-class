@@ -9,7 +9,7 @@ REAL_DEEPSEEK_PILOT = BLOCKED
 - **基线 HEAD（执行前）**：`b3c2a97`
 - **真实 DeepSeek Chat Completions 请求数**：**0 / 授权 2**
 - **实际计费**：**¥0**（未发起任何请求）
-- **本地估算费用**：**¥0**（无调用）；两次调用的**最坏情况建模上限 ¥0.012292**
+- **本地估算费用**：**¥0**（无调用）；两次调用的**最坏情况建模上限 ¥0.012286**（随演示库快照变化，见 §4.2 注）
 
 ---
 
@@ -113,7 +113,7 @@ EXIT=2      ← 未消耗任何额度、未发起任何网络请求
 | `response_format == {"type":"json_object"}` | PASS |
 | `stream == false` | PASS |
 | `max_tokens <= 500` | PASS |
-| 完整 messages JSON ≤ 8 KB | PASS（single 1169 B / plan 977 B） |
+| 完整 messages JSON ≤ 8 KB | PASS（single 1167 B / plan 976 B） |
 | 系统提示要求输出 JSON | PASS |
 | 用户消息 == 白名单快照（逐字节相等） | PASS |
 | 白名单不含任何识别性信息 | PASS |
@@ -125,25 +125,33 @@ EXIT=2      ← 未消耗任何额度、未发起任何网络请求
 
 ```json
 {"kind":"bed_explanation","teaching_only":true,"priority_rank":2,"requires_isolation":false,
- "bed_type":"NORMAL","final_score":88.24,"warning_count":0,
+ "bed_type":"NORMAL","final_score":79.24,"warning_count":0,
  "score_dimensions":[{"key":"distance","raw_score":75.74,"contribution":24.2381},
  {"key":"priority_fit","raw_score":100.0,"contribution":28.0},
- {"key":"ward_balance","raw_score":100.0,"contribution":18.0},
+ {"key":"ward_balance","raw_score":50.0,"contribution":9.0},
  {"key":"cost","raw_score":100.0,"contribution":12.0},
  {"key":"preference","raw_score":60.0,"contribution":6.0}]}
 ```
-SHA256：`1e52af013ae42083a47d4efd376a7dfa8305792cc5815dda03492c1328f073c0`
+SHA256：`9e27e6db1f111ae700ac0156a79da784066251ea7885c8cc327f09b35b00527f`
 
 **plan（整批解释，功能类型 = plan）**
 
 ```json
-{"kind":"aggregate_bed_allocation_preview","teaching_only":true,"request_count":3,
- "candidate_edges":15,"admitted_gain":0,
- "greedy":{"admitted":3,"priority_sum":8,"score_sum":235.07},
- "optimized":{"admitted":3,"priority_sum":8,"score_sum":235.07,
+{"kind":"aggregate_bed_allocation_preview","teaching_only":true,"request_count":2,
+ "candidate_edges":7,"admitted_gain":0,
+ "greedy":{"admitted":2,"priority_sum":4,"score_sum":161.29},
+ "optimized":{"admitted":2,"priority_sum":4,"score_sum":161.29,
  "method":"exact_min_cost_flow","proven_optimal":true}}
 ```
-SHA256：`845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a`
+SHA256：`ffd3ef45cf8bfd2c954c3eb09834798671373088ad6dcb0bd0be4577e3bb30d4`
+
+> **注（载荷随演示库快照变化）**：上述载荷取自项目内**虚构演示库的实时快照**
+> （`recommend_beds()` 的当前候选与 `optimization_preview.preview(solver="auto")` 的当前结果）。
+> 演示库在本会话期间正被操作者通过前端正常使用（审计可见 admin@127.0.0.1 的
+> RECOMMEND/RESERVE_BED/UPDATE 记录），因此 `final_score`、候选数、字节数与 SHA256
+> 会随数据变化。**不随数据变化的**是本次要核验的不变量：白名单结构、
+> 唯一 endpoint/模型/参数、无识别性字段、以及预算上界口径（§4.3）。
+> 如需固定复现，请先冻结演示库快照再执行 `--dry-run`。
 
 **白名单核验**：两条载荷均已通过 `_safe_evidence` fail-closed 白名单，
 断言结果 = 无禁止键名（`patient_id`/`admission_request_id`/`bed_id`/`bed_code`/
@@ -155,11 +163,11 @@ SHA256：`845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a`
 
 | 路径 | 输入上界（1 token/字节） | 输出上界 | 最坏情况（flash 高峰） | 兜底（pro 高峰） |
 |---|---|---|---|---|
-| single | 1169 tokens | 500 | ¥0.006338 | ¥0.024021 |
-| plan | 977 tokens | 500 | ¥0.005954 | ¥0.022293 |
-| **合计** | — | — | **¥0.012292** | **¥0.046314** |
+| single | 1167 tokens | 500 | ¥0.006334 | ¥0.024003 |
+| plan | 976 tokens | 500 | ¥0.005952 | ¥0.022284 |
+| **合计** | — | — | **¥0.012286** | **¥0.046287** |
 
-两次调用最坏情况合计 ¥0.012292（兜底口径 ¥0.046314）**均远低于 ¥0.50 授权预算**。
+两次调用最坏情况合计 ¥0.012286（兜底口径 ¥0.046287）**均远低于 ¥0.50 授权预算**。
 结论：预算充足，不存在因费用不可估算或可能超限而必须放弃的情形 ——
 本次阻塞**只**来自缺少 API Key。
 
@@ -176,7 +184,7 @@ SHA256：`845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a`
 | Endpoint / 模型 | `api.deepseek.com/chat/completions` / `deepseek-flash` | 同左 |
 | 功能类型 | single | plan |
 | 外发白名单检查 | **通过（离线彩排已验）** | **通过（离线彩排已验）** |
-| 脱敏载荷 SHA256 | `1e52af01…073c0` | `845572a8…849a` |
+| 脱敏载荷 SHA256 | `9e27e6db…527f` | `ffd3ef45…30d4` |
 | HTTP 状态码 | **未发起** | **未发起** |
 | DeepSeek request ID | 未发起（且现有 API 契约未透出 `id` 字段） | 同左 |
 | JSON 可解析 | — | — |

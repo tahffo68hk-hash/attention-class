@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from time import perf_counter
@@ -30,6 +31,21 @@ class DeepSeekResult:
     latency_ms: float
     model: str
     cost_estimate_cny: float | None
+    # provider 侧响应 id（对账用）。放最后并带默认值，避免破坏既有位置参数构造。
+    request_id: str | None = None
+
+
+# provider 响应 id 白名单：只允许对账所需的保守字符集与长度。
+# 不合规一律丢弃（返回 None），避免把任意上游文本带进审计/日志（日志注入、密钥夹带）。
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:\-]{1,128}$")
+
+
+def _safe_request_id(raw: Any) -> str | None:
+    """把响应体 ``id`` 收窄为安全的对账标识；缺失或不合规返回 None（不使整次解析失败）。"""
+    if not isinstance(raw, str):
+        return None
+    candidate = raw.strip()
+    return candidate if _REQUEST_ID_RE.match(candidate) else None
 
 
 def is_ready() -> bool:
@@ -85,8 +101,10 @@ def _parse(envelope: Any, latency_ms: float) -> DeepSeekResult:
         model = envelope.get("model", settings.DEEPSEEK_MODEL)
         if not isinstance(model, str) or not model.startswith("deepseek-"):
             raise ValueError("invalid model")
+        # provider 请求 id 属辅助信息：缺失/不合规都只置 None，不使整次解释失败。
+        request_id = _safe_request_id(envelope.get("id"))
         return DeepSeekResult(explanation.strip(), [s.strip() for s in cautions], usage,
-                              latency_ms, model, _cost_estimate(usage))
+                              latency_ms, model, _cost_estimate(usage), request_id)
     except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise BizError(ErrorCode.INTERNAL_ERROR, "DeepSeek 返回内容不完整或不符合约定，请改用规则解释", 502) from exc
 

@@ -13,6 +13,9 @@ htmlcov/
 *.log
 
 # 本地环境变量（保留 .env.example）
+# 说明：`.env` 不带斜杠 → 匹配任意目录下的 .env（含根目录 compose 用的 .env、
+# backend/.env），但**不会**匹配 .env.example。
+.env
 backend/.env
 .env.local
 

@@ -1,0 +1,35 @@
+==============================================================================
+决定性核查：公开历史中的真实取值是否仍残留于工作区
+==============================================================================
+公开边界 origin/main = f31805819a52
+当前 HEAD = 26b602d564e2
+
+✅ 已清除  [persistent] SECRET_KEY(compose)
+        指纹=0fc6b32a6011 len=38
+        受跟踪文件命中: （无）
+✅ 已清除  [persistent] MYSQL_ROOT_PASSWORD(compose)
+        指纹=d41ca9b3ff93 len=8
+        受跟踪文件命中: （无）
+✅ 已清除  [persistent] MYSQL_PASSWORD(compose)
+        指纹=1c954a13edbe len=17
+        受跟踪文件命中: （无）
+✅ 已清除  [persistent] app_pw(sql init)
+        指纹=1c954a13edbe len=17
+        受跟踪文件命中: （无）
+✅ 已清除  [persistent] SECRET_KEY(config.py)
+        指纹=0fc6b32a6011 len=38
+        受跟踪文件命中: （无）
+❌ 仍残留  [ci-ephemeral] CI_SECRET_KEY(ci.yml)
+        指纹=e9c1a8da9ae2 len=55
+        受跟踪文件命中: ['.github/workflows/ci.yml']
+❌ 仍残留  [ci-ephemeral] CI_MYSQL_ROOT(ci.yml)
+        指纹=5d9367c45543 len=15
+        受跟踪文件命中: ['.github/workflows/ci.yml']
+❌ 仍残留  [ci-ephemeral] CI_MYSQL_PW(ci.yml)
+        指纹=610781d5fc98 len=13
+        受跟踪文件命中: ['.github/workflows/ci.yml']
+
+------------------------------------------------------------------------------
+【持久资产类】受版本控制文件中仍残留 = 0  （必须为 0）
+【CI 一次性容器类】仍在 ci.yml 中明文 = 3  （作用域仅限 Actions 里临时 mysql 服务，无可访问的持久资产）
+结论：✅ 跟踪文件中已不存在任何可访问持久资产的公开凭据

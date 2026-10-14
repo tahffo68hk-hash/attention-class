@@ -119,11 +119,13 @@ def test_deepseek_adapter_with_mocked_provider_only(synthetic, monkeypatch):
         assert kind=='bed'
         return DeepSeekResult('真实 DeepSeek 说明草稿',['仅供模拟'],
                               {'prompt_tokens':100,'completion_tokens':20},3.5,
-                              'deepseek-flash',None)
+                              'deepseek-flash',None,'chatcmpl-bed-1')
     monkeypatch.setattr(adapter,'generate',fake_generate)
     resp=explain(db,ids[0],bed.id,mode='llm',confirm_external_call=True)
     assert resp.provider=='deepseek' and resp.real_ai and resp.externally_sent
     assert resp.input_tokens==100 and resp.model=='deepseek-flash' and resp.review_required
+    # provider 响应 id 必须透出，供与平台账单对账
+    assert resp.request_id=='chatcmpl-bed-1'
     blob=str(payloads[0])
     assert '模拟患者甲' not in blob and 'SIM-CERT' not in blob and 'BED-' not in blob
 
@@ -213,7 +215,7 @@ def test_deepseek_global_plan_only_gets_anonymous_aggregates(synthetic, monkeypa
         seen.append((kind,payload))
         return DeepSeekResult('调度汇总说明',['仅供演示'],
                               {'prompt_tokens':30,'completion_tokens':15},2.0,
-                              'deepseek-flash',None)
+                              'deepseek-flash',None,'chatcmpl-plan-1')
     monkeypatch.setattr(adapter,'generate',mock_llm)
     with pytest.raises(BizError):
         adapter.explain_plan(db,ids,mode='llm',confirm_external_call=False)
@@ -221,6 +223,7 @@ def test_deepseek_global_plan_only_gets_anonymous_aggregates(synthetic, monkeypa
     output=adapter.explain_plan(db,ids,mode='llm',confirm_external_call=True)
     assert output.real_ai and output.provider=='deepseek' and output.review_required
     assert output.assigned_count==2 and len(seen)==1
+    assert output.request_id=='chatcmpl-plan-1'
     kind,payload=seen[0]
     assert kind=='plan'
     blob=str(payload)

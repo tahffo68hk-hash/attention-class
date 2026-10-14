@@ -34,6 +34,8 @@ class ExplainOut(BaseModel):
     cost_usd: float | None = None
     cost_estimate_cny: float | None = None
     latency_ms: float | None = None
+    # DeepSeek 响应 id（仅真实调用时存在；供对账，不含任何患者/床位信息）
+    request_id: str | None = None
     review_required: bool = True
     performed_allocation: bool = False
 
@@ -55,6 +57,8 @@ class PlanExplainOut(BaseModel):
     output_tokens: int | None = None
     cost_estimate_cny: float | None = None
     latency_ms: float | None = None
+    # DeepSeek 响应 id（仅真实调用时存在；供对账）
+    request_id: str | None = None
     preview_only: bool = True
     explanation: str
     recommendations: list[str]

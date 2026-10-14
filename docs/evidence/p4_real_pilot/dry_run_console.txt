@@ -22,10 +22,10 @@ Pilot ID        : P4PILOT-20261014T140727+0800
   [PASS] 系统提示要求输出 JSON
   [PASS] 用户消息即白名单快照
   [PASS] MockTransport 解析成功
-  · 载荷字节      : 1169 B (input_bound=1169 tokens)
-  · 白名单 SHA256 : 1e52af013ae42083a47d4efd376a7dfa8305792cc5815dda03492c1328f073c0
-  · 最坏情况费用  : ¥0.006338（flash 高峰） / ¥0.024021（pro 高峰兜底）
-  · 白名单载荷    : {"kind":"bed_explanation","teaching_only":true,"priority_rank":2,"requires_isolation":false,"bed_type":"NORMAL","final_score":88.24,"warning_count":0,"score_dimensions":[{"key":"distance","raw_score":75.74,"contribution":24.2381},{"key":"priority_fit","raw_score":100.0,"contribution":28.0},{"key":"ward_balance","raw_score":100.0,"contribution":18.0},{"key":"cost","raw_score":100.0,"contribution":12.0},{"key":"preference","raw_score":60.0,"contribution":6.0}]}
+  · 载荷字节      : 1167 B (input_bound=1167 tokens)
+  · 白名单 SHA256 : 9e27e6db1f111ae700ac0156a79da784066251ea7885c8cc327f09b35b00527f
+  · 最坏情况费用  : ¥0.006334（flash 高峰） / ¥0.024003（pro 高峰兜底）
+  · 白名单载荷    : {"kind":"bed_explanation","teaching_only":true,"priority_rank":2,"requires_isolation":false,"bed_type":"NORMAL","final_score":79.24,"warning_count":0,"score_dimensions":[{"key":"distance","raw_score":75.74,"contribution":24.2381},{"key":"priority_fit","raw_score":100.0,"contribution":28.0},{"key":"ward_balance","raw_score":50.0,"contribution":9.0},{"key":"cost","raw_score":100.0,"contribution":12.0},{"key":"preference","raw_score":60.0,"contribution":6.0}]}
 
 ==============================================================================
 [plan] 外发载荷核验（白名单 fail-closed）
@@ -42,16 +42,16 @@ Pilot ID        : P4PILOT-20261014T140727+0800
   [PASS] 系统提示要求输出 JSON
   [PASS] 用户消息即白名单快照
   [PASS] MockTransport 解析成功
-  · 载荷字节      : 977 B (input_bound=977 tokens)
-  · 白名单 SHA256 : 845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a
-  · 最坏情况费用  : ¥0.005954（flash 高峰） / ¥0.022293（pro 高峰兜底）
-  · 白名单载荷    : {"kind":"aggregate_bed_allocation_preview","teaching_only":true,"request_count":3,"candidate_edges":15,"admitted_gain":0,"greedy":{"admitted":3,"priority_sum":8,"score_sum":235.07},"optimized":{"admitted":3,"priority_sum":8,"score_sum":235.07,"method":"exact_min_cost_flow","proven_optimal":true}}
+  · 载荷字节      : 976 B (input_bound=976 tokens)
+  · 白名单 SHA256 : ffd3ef45cf8bfd2c954c3eb09834798671373088ad6dcb0bd0be4577e3bb30d4
+  · 最坏情况费用  : ¥0.005952（flash 高峰） / ¥0.022284（pro 高峰兜底）
+  · 白名单载荷    : {"kind":"aggregate_bed_allocation_preview","teaching_only":true,"request_count":2,"candidate_edges":7,"admitted_gain":0,"greedy":{"admitted":2,"priority_sum":4,"score_sum":161.29},"optimized":{"admitted":2,"priority_sum":4,"score_sum":161.29,"method":"exact_min_cost_flow","proven_optimal":true}}
 
 ==============================================================================
 彩排结论
 ==============================================================================
   两项载荷全部通过检查 : True
-  两次调用最坏情况合计 : ¥0.012292  (授权预算 ¥0.5)
+  两次调用最坏情况合计 : ¥0.012286  (授权预算 ¥0.5)
   预算是否充裕         : True
   本次彩排真实网络请求 : 0（MockTransport 拦截）
   证据已写入           : E:\Attention is all you need\docs\evidence\p4_real_pilot\preflight_dry_run.json

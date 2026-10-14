@@ -6,8 +6,18 @@
 --   业务数据表结构**不在此定义**，由 Alembic 迁移管理
 --   （backend/alembic/versions/），正式表结构待业务设计确认后定稿。
 --
--- 使用（本地 MySQL 8）：
---   mysql -h 127.0.0.1 -P 3307 -u root -p < sql/init/00_create_database.sql
+-- ⚠️ 本文件是**模板**，只含占位符 __APP_DB_PASSWORD__，不含任何真实口令
+--    （本仓库公开，禁止在受版本控制的文件里写入可用凭据）。
+--
+-- 使用方式（推荐，从 backend/.env 取口令，渲染后再执行）：
+--   python scripts/render_sql_init.py --print | \
+--     mysql -h 127.0.0.1 -P 3307 -u root -p
+--   或渲染到临时文件（/tmp 或本机任意位置，勿提交）：
+--   python scripts/render_sql_init.py --out /tmp/init_db.sql
+--   mysql -h 127.0.0.1 -P 3307 -u root -p < /tmp/init_db.sql
+--
+--   渲染器读取顺序：环境变量 APP_DB_PASSWORD → backend/.env 中的
+--   DATABASE_URL 口令段。取不到就报错退出，绝不使用默认口令。
 -- =====================================================================
 
 CREATE DATABASE IF NOT EXISTS `hospital`
@@ -20,7 +30,7 @@ CREATE DATABASE IF NOT EXISTS `hospital_test`
   COLLATE utf8mb4_unicode_ci;
 
 -- 应用账号：仅用于本地原型开发，生产环境请使用独立强口令与最小权限
-CREATE USER IF NOT EXISTS 'hospital_app'@'%' IDENTIFIED BY 'hospital_pwd_2026';
+CREATE USER IF NOT EXISTS 'hospital_app'@'%' IDENTIFIED BY '__APP_DB_PASSWORD__';
 
 GRANT ALL PRIVILEGES ON `hospital`.*      TO 'hospital_app'@'%';
 GRANT ALL PRIVILEGES ON `hospital_test`.* TO 'hospital_app'@'%';

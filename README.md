@@ -72,11 +72,22 @@ Attention is all you need/
   --max-connections=200 --default-time-zone=+08:00 --console
 
 # 创建数据库与应用账号（新开一个终端）
-& "C:\mysql-8.0.32-winx64\bin\mysql.exe" -h 127.0.0.1 -P 3307 -u root --skip-password `
-  -e "source E:/Attention is all you need/sql/init/00_create_database.sql"
+#   注意：sql/init/00_create_database.sql 是**模板**（只含占位符 __APP_DB_PASSWORD__）。
+#   本仓库公开，因此真实口令只允许来自环境变量 APP_DB_PASSWORD 或 backend/.env。
+#   先用渲染器生成可执行 SQL，再交给 mysql 执行：
+python "E:\Attention is all you need\scripts\render_sql_init.py" --print | `
+  & "C:\mysql-8.0.32-winx64\bin\mysql.exe" -h 127.0.0.1 -P 3307 -u root -p
 ```
 
 已有 MySQL 的用户也可以直接用现成实例，只要改 `.env` 里的 `DATABASE_URL`。
+
+> **凭据约定（务必遵守）**：`backend/app/core/config.py`、
+> `docker-compose.yml`、`sql/init/00_create_database.sql` 与两份 `.env.example`
+> **只在版本控制里保存占位符**（`<YOUR_...>` / `CHANGE_ME_...`）。
+> 真实口令与 `SECRET_KEY` 一律放在被 gitignore 的 `backend/.env`（应用）与
+> 根目录 `.env`（docker compose 插值）中。
+> 一旦占位符生效，应用会**拒绝启动**并给出提示 —— 这是有意的 fail-fast，
+> 防止"默认弱口令"被当成生产配置。
 
 ### 2. 后端
 
@@ -89,6 +100,9 @@ python -m pip install -i https://mirrors.aliyun.com/pypi/simple/ `
 
 # 配置环境变量
 Copy-Item .env.example .env     # 如已存在可跳过
+#   然后【必须】把 .env 里的 <YOUR_APP_DB_PASSWORD> / <YOUR_SECRET_KEY> 换成真实取值，
+#   否则应用会拒绝启动（防止占位符被当成生效配置）。
+#   SECRET_KEY 生成：python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 # 建表（Alembic 迁移）
 python -m alembic upgrade head

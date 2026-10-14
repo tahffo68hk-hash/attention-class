@@ -2,6 +2,12 @@ name: CI (fictional medical data only)
 on:
   push:
   pull_request:
+# 说明（凭据作用域）：
+#   下方 MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD / SECRET_KEY 是**一次性 CI 容器口令**，
+#   只用于本 job 内临时启动的 mysql 服务（随 job 结束后即销毁），
+#   不对任何持久资产、外部服务或开发者环境授权，因此不构成秘密，可明文保留。
+#   若后续改为连接共享/持久数据库，请改用 GitHub Actions Secrets：
+#     ${{ secrets.CI_MYSQL_PASSWORD }} 等，而不是继续写在这里。
 jobs:
   backend:
     runs-on: ubuntu-latest

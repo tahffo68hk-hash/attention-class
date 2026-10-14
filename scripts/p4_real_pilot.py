@@ -22,10 +22,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
+import os
 import re
 import sys
+import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,7 +43,9 @@ try:  # 保证中文输出在 Windows 控制台可用
 except Exception:  # noqa: BLE001
     pass
 
-STATE_PATH = REPO / ".workbuddy" / "p4_pilot_state.json"
+STATE_PATH = Path(os.environ.get("P4_PILOT_STATE_PATH")
+                  or (REPO / ".workbuddy" / "p4_pilot_state.json"))
+LOCK_PATH = STATE_PATH.with_suffix(".lock")
 EVIDENCE_DIR = REPO / "docs" / "evidence" / "p4_real_pilot"
 
 CN = timezone(timedelta(hours=8))
@@ -76,64 +82,157 @@ def sha256_text(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# 持久计数（防重启 / 防重复点击突破上限）
+# 跨进程互斥（防并发执行突破授权上限 / 预算）
+# --------------------------------------------------------------------------- #
+def _acquire(fd: int) -> None:
+    if os.name == "nt":
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _release(fd: int) -> None:
+    if os.name == "nt":
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def state_lock(timeout: float = 30.0):
+    """对 Pilot 状态加**跨进程**排他锁。
+
+    必须覆盖整个「读计数 → 预算校验 → 占用额度 → 落盘」序列。否则并发实例
+    各自读到相同旧计数、**同时通过**上限与预算校验，实际发出 N 次真实请求
+    （N = 并发实例数），而落盘计数只 +1 —— 授权上限形同虚设。
+    """
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    fd: int | None = None
+    while True:
+        try:
+            # 注意：Windows 的字节范围锁是**强制锁** —— 锁被占用时连
+            # os.open(O_RDWR) 都会直接失败（Errno 13），因此 open 必须
+            # 和加锁一起放进重试循环。
+            fd = os.open(LOCK_PATH, os.O_CREAT | os.O_RDWR)
+            _acquire(fd)
+            break
+        except OSError:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                fd = None
+            if time.monotonic() >= deadline:
+                raise SystemExit(
+                    "[BLOCKED] 无法获取 Pilot 状态锁（另一实例可能正在运行）；"
+                    "为防止突破授权上限，本次拒绝执行。") from None
+            time.sleep(0.02)
+    try:
+        yield
+    finally:
+        try:
+            _release(fd)
+        finally:
+            os.close(fd)
+
+
+# --------------------------------------------------------------------------- #
+# 持久计数（防重启 / 防重复点击 / 防并发执行突破上限）
 # --------------------------------------------------------------------------- #
 def load_state() -> dict:
-    """读取持久状态；**首次调用即落盘**，保证 Pilot ID 跨进程/重启稳定。"""
+    """读取持久状态；首次创建在**锁内**完成，保证 Pilot ID 与计数跨进程一致。"""
     if STATE_PATH.exists():
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    state = {
-        "pilot_id": "P4PILOT-" + datetime.now(CN).strftime("%Y%m%dT%H%M%S%z"),
-        "created_at": datetime.now(CN).isoformat(),
-        "authorized_max_requests": AUTHORIZED_MAX_REQUESTS,
-        "authorized_budget_cny": AUTHORIZED_BUDGET_CNY,
-        "attachments": [],
-        "attempts": [],
-        "cumulative_estimate_cny": 0.0,
-    }
-    save_state(state)  # ← 立即持久化，避免每次运行重新生成 Pilot ID
-    return state
+    with state_lock():
+        if STATE_PATH.exists():          # 双检：并发时由先拿到锁的一方创建
+            return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        state = {
+            "pilot_id": "P4PILOT-" + datetime.now(CN).strftime("%Y%m%dT%H%M%S%z"),
+            "created_at": datetime.now(CN).isoformat(),
+            "authorized_max_requests": AUTHORIZED_MAX_REQUESTS,
+            "authorized_budget_cny": AUTHORIZED_BUDGET_CNY,
+            "attachments": [],
+            "attempts": [],
+            "cumulative_estimate_cny": 0.0,
+        }
+        save_state(state)  # ← 立即持久化，避免每次运行重新生成 Pilot ID
+        return state
 
 
 def save_state(state: dict) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE_PATH.with_suffix(".json.tmp")
+    # 临时文件名必须**每进程唯一**：多个实例并发落盘时若共用同一 .tmp，
+    # 会互相覆盖/抢占（Windows 上直接 PermissionError 崩溃）。
+    tmp = STATE_PATH.with_name(f"{STATE_PATH.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(STATE_PATH)  # 原子替换 + 落盘
+    last: Exception | None = None
+    for i in range(10):  # Windows 上并发替换目标可能瞬时失败，做有界重试
+        try:
+            tmp.replace(STATE_PATH)  # 原子替换 + 落盘
+            return
+        except PermissionError as exc:
+            last = exc
+            time.sleep(0.02 * (i + 1))
+    tmp.unlink(missing_ok=True)
+    raise SystemExit(f"[BLOCKED] 无法写入 Pilot 状态文件（并发争用）：{type(last).__name__}")
 
 
 def reserve_attempt(state: dict, kind: str, worst_case_cny: float) -> int:
-    """在**发起网络请求之前**占用一次授权额度并立即落盘。"""
-    used = len(state["attempts"])
-    if used >= AUTHORIZED_MAX_REQUESTS:
-        raise SystemExit(f"[BLOCKED] 已达授权上限 {AUTHORIZED_MAX_REQUESTS} 次，拒绝发起新请求。")
-    remaining = AUTHORIZED_BUDGET_CNY - state["cumulative_estimate_cny"]
-    if worst_case_cny > remaining:
-        raise SystemExit(
-            f"[BLOCKED] 本次最坏情况 ¥{worst_case_cny:.6f} 超出剩余预算 ¥{remaining:.6f}，拒绝发起请求。")
-    seq = used + 1
-    state["attempts"].append({
-        "seq": seq,
-        "kind": kind,
-        "started_at": datetime.now(CN).isoformat(),
-        "status": "IN_FLIGHT",
-        "worst_case_estimate_cny": round(worst_case_cny, 8),
-    })
-    save_state(state)  # ← 先落盘再发请求
-    return seq
+    """在**发起网络请求之前**占用一次授权额度并立即落盘。
+
+    整个过程持有跨进程排他锁，并在锁内**重新读取磁盘状态**，因此并发实例被
+    串行化：第 3 个及以后的实例一定读到已满的计数并被拒绝，不会多发请求。
+    """
+    with state_lock():
+        fresh = load_state()
+        used = len(fresh["attempts"])
+        if used >= AUTHORIZED_MAX_REQUESTS:
+            raise SystemExit(f"[BLOCKED] 已达授权上限 {AUTHORIZED_MAX_REQUESTS} 次，拒绝发起新请求。")
+        # 预算余量必须同时扣掉：① 已确认花费；② **仍未结算的在途预留**（悲观上界）。
+        # 否则并发/连续两次调用都按同一份余量判断，预算校验形同虚设。
+        in_flight = sum(float(a.get("worst_case_estimate_cny") or 0.0)
+                        for a in fresh["attempts"] if a.get("status") == "IN_FLIGHT")
+        remaining = AUTHORIZED_BUDGET_CNY - fresh["cumulative_estimate_cny"] - in_flight
+        if worst_case_cny > remaining:
+            raise SystemExit(
+                f"[BLOCKED] 本次最坏情况 ¥{worst_case_cny:.6f} 超出剩余预算 ¥{remaining:.6f}，拒绝发起请求。")
+        seq = used + 1
+        fresh["attempts"].append({
+            "seq": seq,
+            "kind": kind,
+            "started_at": datetime.now(CN).isoformat(),
+            "status": "IN_FLIGHT",
+            "worst_case_estimate_cny": round(worst_case_cny, 8),
+        })
+        save_state(fresh)  # ← 先落盘再发请求
+        state.clear()
+        state.update(fresh)  # 回填调用方持有的 dict（保持既有调用方式不变）
+        return seq
 
 
 def finalize_attempt(state: dict, seq: int, patch: dict) -> dict:
-    for att in state["attempts"]:
-        if att["seq"] == seq:
-            att.update(patch)
-            cost = patch.get("cost_estimate_cny")
-            if isinstance(cost, (int, float)):
-                state["cumulative_estimate_cny"] = round(
-                    state["cumulative_estimate_cny"] + float(cost), 8)
-            break
-    save_state(state)
-    return state["attempts"][seq - 1]
+    with state_lock():
+        fresh = load_state()
+        for att in fresh["attempts"]:
+            if att["seq"] == seq:
+                att.update(patch)
+                cost = patch.get("cost_estimate_cny")
+                if isinstance(cost, (int, float)):
+                    fresh["cumulative_estimate_cny"] = round(
+                        fresh["cumulative_estimate_cny"] + float(cost), 8)
+                break
+        save_state(fresh)
+        state.clear()
+        state.update(fresh)
+        return fresh["attempts"][seq - 1]
 
 
 # --------------------------------------------------------------------------- #

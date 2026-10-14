@@ -1,0 +1,26 @@
+==============================================================================
+凭据审计 —— 来源：工作区(HEAD=26b602d)
+==============================================================================
+
+[真实取值类] 共 7 个
+  指纹 3b4e56c8e08a  len=19  类型=['url-password']
+      docker-compose.yml:51:url-password
+      docker-compose.yml:52:url-password
+  指纹 5ff20a00088d  len=28  类型=['SECRET_KEY']
+      backend/app/core/config.py:80:SECRET_KEY
+  指纹 9129b8c79ed1  len=46  类型=['MYSQL_PASSWORD']
+      docker-compose.yml:28:MYSQL_PASSWORD
+  指纹 95024ce9833c  len=6  类型=['url-password']
+      backend/app/core/config.py:30:url-password
+  指纹 c15c17bbe15a  len=38  类型=['SECRET_KEY']
+      docker-compose.yml:53:SECRET_KEY
+  指纹 eef17d56abc5  len=12  类型=['MYSQL_USER']
+      docker-compose.yml:27:MYSQL_USER
+  指纹 ef1e61926ec2  len=56  类型=['MYSQL_ROOT_PASSWORD']
+      docker-compose.yml:25:MYSQL_ROOT_PASSWORD
+
+[占位符类] 共 4 个（不可用，属预期）
+  指纹 29f75e9c3853  len=22  样本='<YOUR_APP_DB_PASSWORD>'  位置数=5
+  指纹 492547400a79  len=26  样本='<YOUR_MYSQL_ROOT_PASSWOR'  位置数=1
+  指纹 80f1ea04c0e0  len=17  样本='<YOUR_SECRET_KEY>'  位置数=2
+  指纹 82750f3a0383  len=19  样本='__APP_DB_PASSWORD__'  位置数=1

@@ -76,12 +76,14 @@ def explain(db: Session, request_id: int, bed_id: int, *, mode: str = "rules", c
     usage: dict = {}
     model = None
     cost_cny = None
+    request_id = None
     if mode == "llm":
         payload = safe_payload(recommended.priority_rank, req.isolation_required,
                                item.bed_type, item.score, evidence, item.warnings)
         ai = generate("bed", payload)
         explanation, usage, latency, model, cost_cny = (
             ai.explanation, ai.usage, ai.latency_ms, ai.model, ai.cost_estimate_cny)
+        request_id = ai.request_id
         cautions.extend(ai.cautions)
         cautions.insert(0, "以下文字由真实大模型生成，未经独立事实核验，不得作为临床决策依据")
     return ExplainOut(
@@ -95,6 +97,7 @@ def explain(db: Session, request_id: int, bed_id: int, *, mode: str = "rules", c
         warnings=item.warnings, prompt_version=None if mode == "rules" else PROMPT_VERSION,
         input_tokens=usage.get("prompt_tokens"), output_tokens=usage.get("completion_tokens"),
         cost_usd=None, cost_estimate_cny=cost_cny, latency_ms=latency,
+        request_id=request_id,
     )
 
 
@@ -150,7 +153,8 @@ def explain_plan(db: Session, request_ids: list[int], *, mode: str = "rules",
                              input_tokens=ai.usage.get("prompt_tokens"),
                              output_tokens=ai.usage.get("completion_tokens"),
                              cost_estimate_cny=ai.cost_estimate_cny,
-                             latency_ms=ai.latency_ms)
+                             latency_ms=ai.latency_ms,
+                             request_id=ai.request_id)
     return PlanExplainOut(explanation=explanation, recommendations=recommendations,
                           assigned_count=matched, unmatched_request_ids=plan.optimized.unmatched_request_ids,
                           baseline_assigned_count=plan.baseline.admitted, **result_kwargs)

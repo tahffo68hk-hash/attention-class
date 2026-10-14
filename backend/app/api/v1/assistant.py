@@ -35,7 +35,9 @@ def explain_bed(payload: ExplainIn, request: Request, db: DbSession, user: Curre
                              "prompt_version": output.prompt_version, "tokens_in": output.input_tokens,
                              "tokens_out": output.output_tokens, "latency_ms": output.latency_ms,
                              "no_patient_data_in_prompt": True,
-                             "cost_estimate_cny": output.cost_estimate_cny},
+                             "cost_estimate_cny": output.cost_estimate_cny,
+                             # provider 侧响应 id，用于与平台账单/用量对账（无患者信息）
+                             "provider_request_id": output.request_id},
                      ip=client_ip(request), user_agent=user_agent(request))
         db.commit()
     return output
@@ -74,7 +76,9 @@ def explain_global_plan(payload: PlanExplainIn, request: Request,
                              "prompt_version": output.prompt_version,
                              "tokens_in": output.input_tokens, "tokens_out": output.output_tokens,
                              "cost_estimate_cny": output.cost_estimate_cny,
-                             "latency_ms": output.latency_ms, "aggregates_only": True},
+                             "latency_ms": output.latency_ms, "aggregates_only": True,
+                             # provider 侧响应 id，用于对账（仅聚合数据，无住院证 ID）
+                             "provider_request_id": output.request_id},
                      ip=client_ip(request), user_agent=user_agent(request))
         db.commit()
     return output

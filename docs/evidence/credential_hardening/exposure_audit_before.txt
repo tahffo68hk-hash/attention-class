@@ -1,0 +1,54 @@
+==============================================================================
+凭据审计 —— 来源：origin/main
+==============================================================================
+
+[真实取值类] 共 7 个
+  指纹 0fc6b32a6011  len=38  类型=['SECRET_KEY']
+      .env.example:13:SECRET_KEY
+      backend/.env.example:6:SECRET_KEY
+      backend/app/core/config.py:43:SECRET_KEY
+      docker-compose.yml:46:SECRET_KEY
+  指纹 1c954a13edbe  len=17  类型=['MYSQL_PASSWORD', 'sql-identified-by', 'url-password']
+      .env.example:6:url-password
+      .env.example:7:url-password
+      backend/.env.example:2:url-password
+      backend/.env.example:3:url-password
+      backend/app/core/config.py:33:url-password
+      backend/app/core/config.py:36:url-password
+      docker-compose.yml:22:MYSQL_PASSWORD
+      docker-compose.yml:44:url-password
+      docker-compose.yml:45:url-password
+      sql/init/00_create_database.sql:23:sql-identified-by
+  指纹 5d9367c45543  len=15  类型=['MYSQL_ROOT_PASSWORD']
+      .github/workflows/ci.yml:13:MYSQL_ROOT_PASSWORD
+  指纹 610781d5fc98  len=13  类型=['MYSQL_PASSWORD', 'url-password']
+      .github/workflows/ci.yml:16:MYSQL_PASSWORD
+      .github/workflows/ci.yml:21:url-password
+      .github/workflows/ci.yml:22:url-password
+  指纹 d41ca9b3ff93  len=8  类型=['MYSQL_ROOT_PASSWORD']
+      docker-compose.yml:19:MYSQL_ROOT_PASSWORD
+  指纹 e9c1a8da9ae2  len=55  类型=['SECRET_KEY']
+      .github/workflows/ci.yml:23:SECRET_KEY
+  指纹 eef17d56abc5  len=12  类型=['MYSQL_USER']
+      .github/workflows/ci.yml:15:MYSQL_USER
+      docker-compose.yml:21:MYSQL_USER
+
+[占位符类] 共 0 个（不可用，属预期）
+
+[公开性判定] 上述每一项的引入提交（限制在公开边界内搜索）：
+  0fc6b32a6011: 公开历史命中 1 条提交 → 已公开=True
+      27110a9|2026-10-13|chore: M0 工程初始化 —— 前后端骨架、数据库迁移、工程化配置与基础测试
+  1c954a13edbe: 公开历史命中 1 条提交 → 已公开=True
+      27110a9|2026-10-13|chore: M0 工程初始化 —— 前后端骨架、数据库迁移、工程化配置与基础测试
+  5d9367c45543: 公开历史命中 1 条提交 → 已公开=True
+      7d6789e|2026-10-14|feat(p15-p25): 集成 P15/P25 全量交付（联合优化 + 辅助解释 + 多项 G 系列修复）
+  610781d5fc98: 公开历史命中 1 条提交 → 已公开=True
+      7d6789e|2026-10-14|feat(p15-p25): 集成 P15/P25 全量交付（联合优化 + 辅助解释 + 多项 G 系列修复）
+  d41ca9b3ff93: 公开历史命中 1 条提交 → 已公开=True
+      27110a9|2026-10-13|chore: M0 工程初始化 —— 前后端骨架、数据库迁移、工程化配置与基础测试
+  e9c1a8da9ae2: 公开历史命中 1 条提交 → 已公开=True
+      7d6789e|2026-10-14|feat(p15-p25): 集成 P15/P25 全量交付（联合优化 + 辅助解释 + 多项 G 系列修复）
+  eef17d56abc5: 公开历史命中 2 条提交 → 已公开=True
+      7d6789e|2026-10-14|feat(p15-p25): 集成 P15/P25 全量交付（联合优化 + 辅助解释 + 多项 G 系列修复）
+      27110a9|2026-10-13|chore: M0 工程初始化 —— 前后端骨架、数据库迁移、工程化配置与基础测试
+  （origin/main 可达性基线：True）

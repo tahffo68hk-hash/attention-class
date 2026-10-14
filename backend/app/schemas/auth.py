@@ -9,7 +9,7 @@ from app.schemas.common import ORMModel
 
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=64, examples=["admin"])
-    password: str = Field(..., min_length=4, max_length=128, examples=["admin123"])
+    password: str = Field(..., min_length=4, max_length=128, examples=["<your-password>"])
 
 
 class TokenResponse(BaseModel):
