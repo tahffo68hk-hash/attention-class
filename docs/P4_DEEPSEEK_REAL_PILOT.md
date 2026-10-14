@@ -238,8 +238,12 @@ SHA256：`845572a80e7eb7d4105eeb600db0d66377d041f25dc47a4f125d8cfdae16849a`
 
 ```
 b3c2a97  feat(p4): 集成 DeepSeek 可选真实 AI 解释（基线，执行前 HEAD）
+cddb9cd  chore(p4-pilot): 建立 DeepSeek 真实调用 Pilot 的有界运行器与离线证据（BLOCKED：本机未配置密钥）
 ```
-本次新增（本地提交，**NO PUSH**）：
+`cddb9cd` 即为本报告、本轮证据与运行器的引入提交（5 files changed, +1165）。
+本地提交，**未执行 `git push`（NO PUSH）**：`git log origin/main..HEAD` 显示本地领先远程 2 个提交。
+
+本次新增：
 - `scripts/p4_real_pilot.py`（有界运行器：持久计数 + 预算闸门 + 零网络彩排）
 - `docs/P4_DEEPSEEK_REAL_PILOT.md`（本报告）
 - `docs/evidence/p4_real_pilot/`（脱敏证据目录）
