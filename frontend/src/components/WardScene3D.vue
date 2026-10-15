@@ -142,6 +142,8 @@ let sceneTween = 0
 let hoveredId: number | null = null
 let pointerDown: { x: number; y: number } | null = null
 let initialized = false
+/** 切到后台时是否打断了一段未完的相机/楼层过渡，用于回前台补齐 */
+let resumeTransitionAfterVisibility = false
 
 /* ------------------------------ 材质与图元 ------------------------------ */
 
@@ -568,8 +570,15 @@ function isVisibleObject(obj: THREE.Object3D) {
  */
 function updateOcclusionTargets() {
   let blocked = new Set<THREE.Mesh>()
-  const item = hoveredId === null ? null : selectable.get(hoveredId)
+  // 悬停优先，其次回退到「当前被选中的床」：点击选中后切换楼层/模式时，
+  // 若只认 hoveredId，聚焦过渡期间会残留上一帧的半透明楼板与墙体。
+  const targetId = hoveredId ?? props.selectedId
+  const item = targetId === null ? null : selectable.get(targetId)
   if (item && camera && root && isVisibleObject(item.group)) {
+    // 楼层补间进行中时，渲染矩阵可能仍是上一帧的；用陈旧变换做射线检测
+    // 会让楼板/墙体的透明淡化滞后于床位本身。
+    root.updateWorldMatrix(true, true)
+    camera.updateMatrixWorld()
     const center = item.group.localToWorld(new THREE.Vector3(0, 0.74 - item.lift, 0))
     worldPosition.copy(center).project(camera)
     if (Math.abs(worldPosition.x) <= 1 && Math.abs(worldPosition.y) <= 1) {
@@ -701,6 +710,12 @@ function animateEffectsReduced() {
 
 function startEffects() {
   if (!initialized) return
+  // 标签页不可见时不排帧：后台 RAF 会被浏览器节流，排了只会积压，
+  // 回到前台还要先把过期动画追一帧。真正的重算交给 visibilitychange。
+  if (document.hidden) {
+    stopEffects()
+    return
+  }
   if (reduceMotion()) {
     stopEffects()
     animateEffectsReduced()
@@ -883,8 +898,9 @@ function applyMode(animated = true) {
       const b = targets.get(key) || 0
       group.position.y = a + (b - a) * e
     }
-    // 楼层在移动，遮挡关系每帧都在变，悬停目标需要跟着重算
-    if (hoveredId !== null) {
+    // 楼层在移动，遮挡关系每帧都在变；被选中的床即使当前没有悬停，
+    // 也要跟着重算，否则聚焦过渡期间会残留过期的半透明楼板/墙体。
+    if (hoveredId !== null || props.selectedId !== null) {
       updateOcclusionTargets()
       startEffects()
     }
@@ -1049,6 +1065,7 @@ function initialize() {
     renderer.domElement.addEventListener('click', click)
     observer = new ResizeObserver(resize)
     observer.observe(viewport.value)
+    document.addEventListener('visibilitychange', onDocumentVisibility)
     initialized = true
     rebuild()
     resize()
@@ -1059,7 +1076,36 @@ function initialize() {
   }
 }
 
+/**
+ * 标签页可见性变化。
+ *
+ * 隐藏时只停「效果」帧是不够的：相机补间（animationFrame）与楼层补间
+ * （sceneTween）同样在排帧，后台节流会让它们卡在半途。这里把三类帧一起取消，
+ * 并记下是否打断了一段过渡；回到前台先把楼层过渡一次性补到一致状态，
+ * 再恢复选中床位的聚焦与悬停遮挡，避免出现「半层楼」的中间态。
+ */
+function onDocumentVisibility() {
+  if (document.hidden) {
+    resumeTransitionAfterVisibility = Boolean(animationFrame || sceneTween)
+    if (animationFrame) cancelAnimationFrame(animationFrame)
+    animationFrame = 0
+    if (sceneTween) cancelAnimationFrame(sceneTween)
+    sceneTween = 0
+    stopEffects()
+  } else if (initialized) {
+    if (resumeTransitionAfterVisibility) {
+      resumeTransitionAfterVisibility = false
+      applyMode(false)
+      if (props.selectedId !== null && selectable.has(props.selectedId)) focusBed(props.selectedId)
+    }
+    updateOcclusionTargets()
+    startEffects()
+    render()
+  }
+}
+
 function destroy() {
+  document.removeEventListener('visibilitychange', onDocumentVisibility)
   if (animationFrame) cancelAnimationFrame(animationFrame)
   if (sceneTween) cancelAnimationFrame(sceneTween)
   stopEffects()
@@ -1085,6 +1131,7 @@ function destroy() {
   camera = undefined
   scene = undefined
   initialized = false
+  resumeTransitionAfterVisibility = false
 }
 
 onMounted(initialize)
