@@ -132,7 +132,43 @@ npm run dev
 开发服务器已在 `vite.config.ts` 中把 `/api`、`/health`、`/docs`、`/redoc`、`/openapi.json`
 代理到 `127.0.0.1:8000`，无需额外处理跨域。
 
-### 4. 一键启动（Docker Compose，可选）
+### 4. 一键启停（本机脚本，推荐）
+
+`scripts\dev.ps1` 把三件套（MySQL `3307` → 后端 `8000` → 前端 `5173`）做成了**幂等**启停：
+已在监听的组件直接跳过，重复执行不会起出第二个 mysqld
+（两个 mysqld 共用同一数据目录有 InnoDB 损坏风险，脚本会自动识别并清理这种"孪生"进程）。
+
+不想敲命令的话，**双击** `scripts\` 下这几个 `.cmd` 即可：
+
+| 双击这个 | 作用 |
+| --- | --- |
+| `scripts\start-dev.cmd` | 启动三件套，然后自动打开 <http://127.0.0.1:5173/> |
+| `scripts\stop-backend.cmd` | **只停后端**（`8000`），MySQL 与前端保持不动 |
+| `scripts\stop-dev.cmd` | 全部停止（前端 → 后端 → MySQL） |
+| `scripts\status-dev.cmd` | 查看三个端口的占用情况与关库方式 |
+
+等价的命令行写法：
+
+```powershell
+cd "E:\Attention is all you need"
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 status          # 看状态
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 up              # 全部启动
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 up backend      # 只启动后端
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 down backend    # 只停后端
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 restart frontend
+```
+
+* **打开网页**：等 `status` 里 `frontend 5173 UP` 之后再访问 <http://127.0.0.1:5173/>，
+  用 `admin / admin123` 登录。3D 病区态势图在 <http://127.0.0.1:5173/ward-map>。
+* 关 MySQL 时脚本会优先用 `mysqladmin shutdown` **优雅停库**：root 口令取自
+  `$env:MYSQL_ROOT_PASSWORD`，取不到就回落到根目录 `.env` 的 `MYSQL_ROOT_PASSWORD`
+  （**只读取，不打印**）。两者都没有才会强制杀进程（下次启动走 InnoDB 崩溃恢复）。
+* 日志在 `.workbuddy\logs\`（`backend.err.log` / `frontend.err.log`）。
+* 若 `status` 报 `STRAY mysqld ... holds this datadir but is not listening`，
+  说明有个僵尸 mysqld 霸占数据目录，先执行 `down db` 清掉再 `up`。
+* 后端因 `backend\.env` 里残留占位符而拒绝启动，是**有意的 fail-fast**，日志里会说明原因。
+
+### 5. 一键启动（Docker Compose，可选）
 
 ```powershell
 cd "E:\Attention is all you need"

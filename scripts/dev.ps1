@@ -8,7 +8,12 @@
     Safe to run 'up' repeatedly: anything already listening is skipped,
     so you can never end up with two mysqld processes on the same datadir.
 
-    Usage:
+    Usage (also wrapped by double-clickable .cmd files in this folder):
+      scripts\start-dev.cmd      -> up all, then opens http://127.0.0.1:5173/
+      scripts\stop-dev.cmd       -> down all   (frontend -> backend -> mysql)
+      scripts\stop-backend.cmd   -> down backend only
+      scripts\status-dev.cmd     -> status
+
       powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 status
       powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 up
       powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 up backend
@@ -16,9 +21,10 @@
       powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 down
       powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 down db
 
-    Graceful mysql shutdown needs the root password. Provide it via:
-      $env:MYSQL_ROOT_PASSWORD = '<root password>'
-    Without it, mysql is force-stopped (InnoDB will do crash recovery).
+    Graceful mysql shutdown needs the root password. It is taken from
+    $env:MYSQL_ROOT_PASSWORD, or from MYSQL_ROOT_PASSWORD in the repo-root .env.
+    If neither is available, mysql is force-stopped (InnoDB crash recovery on
+    the next start). The password value is never printed.
 #>
 [CmdletBinding()]
 param(
@@ -84,6 +90,26 @@ function Test-BackendHealthy {
 }
 
 function Write-Step { param([string]$Text, [string]$Color = 'Gray') Write-Host $Text -ForegroundColor $Color }
+
+# Graceful mysql shutdown needs the root password. Resolution order:
+#   1. $env:MYSQL_ROOT_PASSWORD (already set by the caller)
+#   2. MYSQL_ROOT_PASSWORD key in the repo-root .env  (the docker-compose interpolation file)
+# The value is NEVER echoed -- only the source is reported.
+function Resolve-MysqlRootPassword {
+    if ($env:MYSQL_ROOT_PASSWORD) { return 'env' }
+    $envFile = Join-Path $Root '.env'
+    if (-not (Test-Path -LiteralPath $envFile)) { return $null }
+    foreach ($line in @(Get-Content -LiteralPath $envFile -ErrorAction SilentlyContinue)) {
+        $t = "$line".Trim()
+        if (-not $t -or $t.StartsWith('#')) { continue }
+        $i = $t.IndexOf('=')
+        if ($i -lt 1) { continue }
+        if ($t.Substring(0, $i).Trim() -ne 'MYSQL_ROOT_PASSWORD') { continue }
+        $v = $t.Substring($i + 1).Trim().Trim([char]34, [char]39)
+        if ($v) { $env:MYSQL_ROOT_PASSWORD = $v; return '.env' }
+    }
+    return $null
+}
 
 # Two mysqld processes sharing one datadir is the dangerous case we guard against.
 function Find-StrayMysqld {
@@ -186,8 +212,9 @@ function Stop-Db {
     if (-not $p) { if ($stray.Count -eq 0) { Write-Step '  [skip ] mysql not running' 'DarkGray' }; return }
 
     $admin = Join-Path $MysqlBin 'mysqladmin.exe'
-    if ($env:MYSQL_ROOT_PASSWORD -and (Test-Path $admin)) {
-        Write-Host '  [stop ] mysql (graceful shutdown) ... ' -NoNewline
+    $pwSource = Resolve-MysqlRootPassword
+    if ($pwSource -and (Test-Path -LiteralPath $admin)) {
+        Write-Host "  [stop ] mysql (graceful shutdown, root pw from $pwSource) ... " -NoNewline
         & $admin -h 127.0.0.1 -P $Ports.db -u root "--password=$($env:MYSQL_ROOT_PASSWORD)" shutdown 2>$null | Out-Null
         $deadline = (Get-Date).AddSeconds(30)
         while ((Get-Date) -lt $deadline -and (Get-PidOnPort $Ports.db)) { Start-Sleep -Milliseconds 500 }
@@ -227,6 +254,10 @@ function Show-Status {
             Write-Host ("  {0,-10}  {1,-4}   --   down" -f $kv.Key, $kv.Value) -ForegroundColor DarkGray
         }
     }
+    $pwSource = Resolve-MysqlRootPassword
+    if ($pwSource) { Write-Host "  mysql shutdown: graceful (root password from $pwSource)" -ForegroundColor DarkGray }
+    else { Write-Host '  mysql shutdown: FORCE -- set $env:MYSQL_ROOT_PASSWORD or add it to .env' -ForegroundColor Yellow }
+
     $stray = @(Find-StrayMysqld)
     if ($stray.Count -gt 0) {
         $ids = ($stray | ForEach-Object { $_.ProcessId }) -join ', '
