@@ -16,7 +16,12 @@
  * - 数据访问走 `@/modules/ward-map/api`（复用既有 HTTP 分层与鉴权/错误处理）；
  * - 中文标签走 `@/lib/labels`，与床位管理页共用同一套词汇；
  * - 详情仍用共享 `Modal`（drawer 变体），保持全站一致的抽屉与焦点行为；
- * - 按钮复用本地 `.btn` 语义，跟随 Clinical SaaS 明暗主题。
+ * - 按钮复用本地 `.btn` 语义，跟随 Clinical SaaS 明暗主题；
+ * - 合并 Hover Visual V3：页面内色块统一走 `sceneBedPalette`，与 3D 场景一致。
+ *
+ * 配色边界：这里只改**态势图页面内**的色块（统计/列表/悬停卡/图例/详情点），
+ * 全系统统一状态色 `statusMeta.hex` 与床位管理页徽标**不受影响**；
+ * 红色系只表示「预占/已入住，不能直接分配」，业务规则与判定逻辑均未改动。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
@@ -27,9 +32,10 @@ import type { BedStatusLogRead } from '@/api/types'
 import { labelOf } from '@/lib/labels'
 import { fetchBedLogs, fetchWardMap } from '@/modules/ward-map/api'
 import { demoSnapshot } from '@/modules/ward-map/demo'
+import { sceneBedPalette } from '@/modules/ward-map/hover-visual'
 import { floorKey } from '@/modules/ward-map/scene-layout'
 import { filterMap, stateOrder, statusMeta } from '@/modules/ward-map/types'
-import type { SceneMode, WardBed, WardMapSnapshot } from '@/modules/ward-map/types'
+import type { BedState, SceneMode, WardBed, WardMapSnapshot } from '@/modules/ward-map/types'
 import '@/modules/ward-map/ward-map.css'
 
 const snapshot = ref<WardMapSnapshot | null>(null)
@@ -55,12 +61,21 @@ const viewMode = ref<SceneMode>('building')
 const activeFloor = ref('')
 let requestId = 0
 
+/**
+ * 页面内所有色块（统计卡、二维列表、悬停卡、图例、详情状态点）统一取
+ * **场景配色**，与 3D 里看到的完全一致：红色系代表预占/已入住，
+ * 黄色只出现在空闲床的悬停提示里。文案标签仍用业务标签，不受配色影响。
+ */
+function sceneColor(status: BedState): string {
+  return sceneBedPalette[status].base
+}
+
 const stats = computed(() => {
   const c = snapshot.value?.counts
   return stateOrder.map((s) => ({
     key: s,
     label: statusMeta[s].label,
-    color: statusMeta[s].hex,
+    color: sceneColor(s),
     count: c?.[s] ?? 0,
   }))
 })
@@ -135,6 +150,11 @@ const lastUpdated = computed(() =>
 
 const detailStatus = computed(() =>
   selectedExists.value ? statusMeta[selectedExists.value.status] : null,
+)
+
+/** 详情抽屉的状态点同样跟随 3D 配色。 */
+const detailColor = computed(() =>
+  selectedExists.value ? sceneColor(selectedExists.value.status) : '',
 )
 
 const warningCount = computed(() => visibleBeds.value.filter((b) => b.state_warning).length)
@@ -491,7 +511,7 @@ onBeforeUnmount(() => {
               :class="{ 'wm-list-selected': selected?.id === b.id }"
               @click="selectBed(b)"
             >
-              <span class="wm-bed-dot" :style="{ background: statusMeta[b.status].hex }"></span>
+              <span class="wm-bed-dot" :style="{ background: sceneColor(b.status) }"></span>
               <strong>{{ b.code }}</strong>
               <small>{{ b.ward_name }}</small>
               <span>{{ statusMeta[b.status].label }}</span>
@@ -511,7 +531,7 @@ onBeforeUnmount(() => {
           >
             <div class="wm-tooltip-head">
               <strong>{{ hovered.code }}</strong>
-              <span :style="{ color: statusMeta[hovered.status].hex }">
+              <span :style="{ color: sceneColor(hovered.status) }">
                 ● {{ statusMeta[hovered.status].label }}
               </span>
             </div>
@@ -541,10 +561,12 @@ onBeforeUnmount(() => {
         <div class="wm-stage-footer">
           <div class="wm-legend">
             <span v-for="s in stateOrder" :key="s">
-              <i :style="{ background: statusMeta[s].hex }"></i>{{ statusMeta[s].label }}
+              <i :style="{ background: sceneColor(s) }"></i>{{ statusMeta[s].label }}
             </span>
           </div>
-          <span class="wm-update">更新于 {{ lastUpdated }}</span>
+          <span class="wm-update">
+            红色系代表预占/已入住 · 黄色仅为空闲床悬停提示 · 更新于 {{ lastUpdated }}
+          </span>
         </div>
 
         <details class="wm-keyboard">
@@ -577,7 +599,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="wm-detail-state">
-          <span class="wm-bed-dot" :style="{ background: detailStatus?.hex }"></span>
+          <span class="wm-bed-dot" :style="{ background: detailColor }"></span>
           <strong>{{ detailStatus?.label }}</strong>
           <span>当前业务状态</span>
         </div>

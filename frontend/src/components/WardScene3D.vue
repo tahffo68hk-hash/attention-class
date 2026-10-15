@@ -13,7 +13,16 @@
  *  3. 新增 `dark` 属性：暗色主题下下调曝光，避免白色病房在深色底上刺眼；
  *  4. 打开方向光软阴影（阴影贴图仅在场景/楼层变化时重算），床位落在地面上，
  *     消除「悬浮方块」观感；透明玻璃不投影，因此不会在剖面里形成遮挡带；
- *  5. 患者几何下移贴合床垫与枕头，避免「人浮在床上/穿进床垫」。
+ *  5. 患者几何下移贴合床垫与枕头，避免「人浮在床上/穿进床垫」；
+ *  6. 合并 Hover Visual V3：按视线探测并淡化遮挡构件、床位弹性浮起、
+ *     每床独立材质做发光/框线/床垫过渡；**保留**上述阴影、曝光与几何加固，
+ *     并修掉交付包漏传 surfaceRest/surfaceHover 导致运行时报错的缺陷。
+ *
+ * Hover V3 的实现要点（均为纯视觉，不触碰业务状态）：
+ * - 拾取体固定挂在楼层 Group，可见病床单独沿 Y 浮起，动画不移动命中区域；
+ * - 遮挡淡化只作用于「相机与被悬停床位之间」被射线穿过的构件，逐对象克隆材质，
+ *   共享材质（同一状态的多张床）绝不会被就地改色；
+ * - prefers-reduced-motion 下取消动画但保留状态与遮挡语义。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
@@ -25,6 +34,14 @@ import {
   type HospitalPlan,
   type SceneFloor,
 } from '@/modules/ward-map/scene-layout'
+import {
+  HOVER_LIFT,
+  easedApproach,
+  fadedOccluderOpacity,
+  isNear,
+  sceneBedPalette,
+  type OccluderKind,
+} from '@/modules/ward-map/hover-visual'
 import { isConfirmedOccupant, statusMeta } from '@/modules/ward-map/types'
 import type { SceneMode, WardBed, WardRoom } from '@/modules/ward-map/types'
 
@@ -67,10 +84,49 @@ const temporaryTextures: THREE.Texture[] = []
 const materials = new Map<string, THREE.MeshStandardMaterial>()
 
 const pickTargets: THREE.Mesh[] = []
-const selectable = new Map<
-  number,
-  { bed: WardBed; group: THREE.Group; outline: THREE.Group; floorKey: string }
->()
+
+/**
+ * 单床的悬停视觉状态。
+ * `accent` / `surface` / `outlineMaterial` 都是**每床独立克隆**的材质：
+ * 就地修改共享材质会把同状态的其他床一起染色。
+ */
+interface BedVisual {
+  bed: WardBed
+  /** 可见病床：只对它做浮起动画 */
+  group: THREE.Group
+  outline: THREE.Group
+  floorKey: string
+  /** 固定拾取体（挂在楼层 Group 上，不随床体浮起） */
+  pick: THREE.Mesh
+  accent: THREE.MeshStandardMaterial
+  surface: THREE.MeshStandardMaterial
+  outlineMaterial: THREE.MeshBasicMaterial
+  restColor: THREE.Color
+  hoverColor: THREE.Color
+  surfaceRest: THREE.Color
+  surfaceHover: THREE.Color
+  lift: number
+  velocity: number
+  glow: number
+}
+
+/** 可被视线穿透并需要淡化的建筑构件（材质已逐对象克隆）。 */
+interface OccludingSurface {
+  mesh: THREE.Mesh
+  material: THREE.MeshStandardMaterial
+  original: number
+  faded: number
+  target: number
+}
+
+const selectable = new Map<number, BedVisual>()
+const occludingSurfaces: OccludingSurface[] = []
+const occlusionMeshes: THREE.Mesh[] = []
+const occlusionRaycaster = new THREE.Raycaster()
+const occlusionNdc = new THREE.Vector2()
+const worldPosition = new THREE.Vector3()
+let effectFrame = 0
+let lastEffectTime = 0
 const floors = new Map<string, THREE.Group>()
 const shells: THREE.Group[] = []
 
@@ -124,6 +180,39 @@ function cube(
   mesh.castShadow = false
   mesh.receiveShadow = true
   parent.add(mesh)
+  return mesh
+}
+
+/**
+ * 建筑构件（楼板/地面/隔墙/框架/玻璃）。
+ *
+ * 与普通 `cube` 的区别：**克隆一份材质**并登记为可淡化对象。
+ * 共享材质一旦被就地改不透明度，整层楼会一起变淡，因此必须逐对象实例化。
+ * 克隆材质登记在 temporaryMaterials，场景重建时统一回收。
+ */
+function architecturalCube(
+  parent: THREE.Object3D,
+  base: THREE.MeshStandardMaterial,
+  kind: OccluderKind,
+  x: number,
+  y: number,
+  z: number,
+  w: number,
+  h: number,
+  d: number,
+) {
+  const local = base.clone()
+  temporaryMaterials.push(local)
+  const mesh = cube(parent, local, x, y, z, w, h, d)
+  const original = base.opacity
+  occludingSurfaces.push({
+    mesh,
+    material: local,
+    original,
+    faded: fadedOccluderOpacity(kind, original),
+    target: original,
+  })
+  occlusionMeshes.push(mesh)
   return mesh
 }
 
@@ -237,7 +326,7 @@ function buildBed(floorGroup: THREE.Group, bed: WardBed, x: number, z: number, a
   const rubber = material('bed-wheel', '#3f5568', { roughness: 0.9 })
   const status = material(
     'state-' + bed.status,
-    statusMeta[bed.status].hex,
+    sceneBedPalette[bed.status].base,
     { metalness: 0.1, roughness: 0.42, emissive: new THREE.Color(statusMeta[bed.status].hex).multiplyScalar(0.18) },
   )
   const glass = material('bed-pick', '#ffffff', { transparent: true, opacity: 0, depthWrite: false })
@@ -250,9 +339,12 @@ function buildBed(floorGroup: THREE.Group, bed: WardBed, x: number, z: number, a
       cylinder(bedGroup, rubber, dx, 0.055, dz, 0.1, 0.075, 0.1)
     }
   }
-  // 床体与床垫
+  // 床体与床垫（床垫单独克隆，才能按床做悬停色过渡）
   cube(bedGroup, enamel, 0, 0.47, 0, 1.37, 0.17, 2.4)
-  cube(bedGroup, padding, 0, 0.585, 0, 1.24, 0.14, 2.22)
+  const surface = padding.clone()
+  surface.color.set(sceneBedPalette[bed.status].surfaceBase)
+  temporaryMaterials.push(surface)
+  cube(bedGroup, surface, 0, 0.585, 0, 1.24, 0.14, 2.22)
   // 床头板（高）/ 床尾板（矮）
   cube(bedGroup, enamel, 0, 0.78, -1.185, 1.38, 0.84, 0.09)
   cube(bedGroup, enamel, 0, 0.55, 1.185, 1.38, 0.36, 0.1)
@@ -266,9 +358,12 @@ function buildBed(floorGroup: THREE.Group, bed: WardBed, x: number, z: number, a
   // 枕头（患者头部落点）
   sphere(bedGroup, pillow, 0, 0.7, -0.87, 0.5, 0.15, 0.26)
 
-  // 状态只体现在床尾灯带与床下指示条上，而不是给整张床刷色
-  cube(bedGroup, status, 0, 0.79, 1.245, 0.66, 0.1, 0.05)
-  cube(bedGroup, status, 0, 0.17, 1.12, 1.12, 0.055, 0.07)
+  // 状态只体现在床尾灯带与床下指示条上，而不是给整张床刷色。
+  // 状态材质同样逐床克隆：直接改共享材质会让所有同状态床一起变色。
+  const accent = status.clone()
+  temporaryMaterials.push(accent)
+  cube(bedGroup, accent, 0, 0.79, 1.245, 0.66, 0.1, 0.05)
+  cube(bedGroup, accent, 0, 0.17, 1.12, 1.12, 0.055, 0.07)
   // 床头柜
   cube(bedGroup, enamel, 1.04, 0.33, -0.83, 0.5, 0.64, 0.48)
   cube(bedGroup, metal, 1.04, 0.57, -0.585, 0.32, 0.025, 0.03)
@@ -285,8 +380,10 @@ function buildBed(floorGroup: THREE.Group, bed: WardBed, x: number, z: number, a
     if (child instanceof THREE.Mesh) child.castShadow = true
   }
 
-  // 独立拾取体积：与透明玻璃墙完全解耦，射线不会先打到建筑玻璃
-  const pick = cube(bedGroup, glass, 0, 0.62, 0, 1.88, 1.4, 2.82)
+  // 独立拾取体积：与透明玻璃墙完全解耦，射线不会先打到建筑玻璃。
+  // **挂在楼层 Group 而不是床体上** —— 床体浮起时命中区域必须留在原地，
+  // 否则光标下的命中区跟着床往上跑，会产生持续的 Hover 抖动。
+  const pick = cube(floorGroup, glass, x, 0.65, z, 1.88, 1.4, 2.82)
   pick.userData.bedId = bed.id
   pick.castShadow = false
   pickTargets.push(pick)
@@ -294,14 +391,40 @@ function buildBed(floorGroup: THREE.Group, bed: WardBed, x: number, z: number, a
   // 悬停/选中描边（贴地灯带，不遮挡床体）
   const outline = new THREE.Group()
   bedGroup.add(outline)
-  const highlight = material('outline', '#1d70da', { emissive: 0x1a5ba8, emissiveIntensity: 0.5 })
+  const outlineMaterial = new THREE.MeshBasicMaterial({
+    color: sceneBedPalette[bed.status].outline,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    toneMapped: false,
+  })
+  temporaryMaterials.push(outlineMaterial)
+  const highlight = outlineMaterial
   cube(outline, highlight, 0, 0.03, -1.36, 1.78, 0.04, 0.09)
   cube(outline, highlight, 0, 0.03, 1.36, 1.78, 0.04, 0.09)
   cube(outline, highlight, -0.86, 0.03, 0, 0.09, 0.04, 2.8)
   cube(outline, highlight, 0.86, 0.03, 0, 0.09, 0.04, 2.8)
   outline.visible = false
 
-  selectable.set(bed.id, { bed, group: bedGroup, outline, floorKey: assignedFloor })
+  selectable.set(bed.id, {
+    bed,
+    group: bedGroup,
+    outline,
+    pick,
+    floorKey: assignedFloor,
+    accent,
+    outlineMaterial,
+    surface,
+    restColor: new THREE.Color(sceneBedPalette[bed.status].base),
+    hoverColor: new THREE.Color(sceneBedPalette[bed.status].hover),
+    // 交付包在此处漏传 surfaceRest/surfaceHover，动画循环会读到 undefined 并抛错，
+    // 这里补齐（BedVisual 接口本来就声明了这两个字段）。
+    surfaceRest: new THREE.Color(sceneBedPalette[bed.status].surfaceBase),
+    surfaceHover: new THREE.Color(sceneBedPalette[bed.status].surfaceHover),
+    lift: 0,
+    velocity: 0,
+    glow: 0,
+  })
 }
 
 /* -------------------------------- 楼层 -------------------------------- */
@@ -328,26 +451,28 @@ function buildFloor(f: SceneFloor) {
   const corridor = material('corridor', '#eaf3f7')
 
   // 结构层：楼板 + 面层 + 沿边梁
-  cube(layer, slab, f.width / 2, -0.24, f.depth / 2, f.width, 0.44, f.depth)
-  cube(layer, floorMat, f.width / 2, -0.004, f.depth / 2, f.width, 0.055, f.depth)
-  cube(layer, corridor, f.width / 2, 0.026, f.depth - 1.2, f.width - 1, 0.035, 1.5)
-  cube(layer, steel, f.width / 2, -0.03, f.depth, f.width, 0.13, 0.08)
+  architecturalCube(layer, slab, 'slab', f.width / 2, -0.24, f.depth / 2, f.width, 0.44, f.depth)
+  architecturalCube(layer, floorMat, 'floor', f.width / 2, -0.004, f.depth / 2, f.width, 0.055, f.depth)
+  architecturalCube(layer, corridor, 'floor', f.width / 2, 0.026, f.depth - 1.2, f.width - 1, 0.035, 1.5)
+  architecturalCube(layer, steel, 'frame', f.width / 2, -0.03, f.depth, f.width, 0.13, 0.08)
 
   // 玻璃幕墙只做后墙与两侧，正面完全剖开（否则挡住全部床位）
-  cube(layer, glass, f.width / 2, 1.95, 0.35, f.width, 3.8, 0.09)
-  cube(layer, glass, 0.2, 1.95, f.depth / 2, 0.08, 3.8, f.depth)
-  cube(layer, glass, f.width - 0.2, 1.95, f.depth / 2, 0.08, 3.8, f.depth)
-  for (const x of [0, f.width]) for (const z of [0, f.depth]) cube(layer, steel, x, 1.95, z, 0.16, 3.85, 0.16)
-  for (let x = 4; x < f.width - 1; x += 5) cube(layer, steel, x, 1.93, 0.36, 0.05, 3.8, 0.07)
+  architecturalCube(layer, glass, 'glass', f.width / 2, 1.95, 0.35, f.width, 3.8, 0.09)
+  architecturalCube(layer, glass, 'glass', 0.2, 1.95, f.depth / 2, 0.08, 3.8, f.depth)
+  architecturalCube(layer, glass, 'glass', f.width - 0.2, 1.95, f.depth / 2, 0.08, 3.8, f.depth)
+  for (const x of [0, f.width])
+    for (const z of [0, f.depth]) architecturalCube(layer, steel, 'frame', x, 1.95, z, 0.16, 3.85, 0.16)
+  for (let x = 4; x < f.width - 1; x += 5)
+    architecturalCube(layer, steel, 'frame', x, 1.93, 0.36, 0.05, 3.8, 0.07)
 
   for (const r of f.rooms) {
     // 病房隔墙：正面（朝镜头一侧）开放，只留矮墙与门垛，保证床品可见
-    cube(layer, wall, r.x + r.width / 2, 0.64, r.z - 0.45, r.width, 1.24, 0.13)
-    cube(layer, wall, r.x - 0.28, 0.6, r.z + r.depth / 2 - 0.5, 0.12, 1.16, r.depth)
-    cube(layer, wall, r.x + r.width + 0.26, 0.6, r.z + r.depth / 2 - 0.5, 0.12, 1.16, r.depth)
-    cube(layer, wallTop, r.x + r.width / 2, 1.27, r.z - 0.45, r.width, 0.07, 0.17)
+    architecturalCube(layer, wall, 'wall', r.x + r.width / 2, 0.64, r.z - 0.45, r.width, 1.24, 0.13)
+    architecturalCube(layer, wall, 'wall', r.x - 0.28, 0.6, r.z + r.depth / 2 - 0.5, 0.12, 1.16, r.depth)
+    architecturalCube(layer, wall, 'wall', r.x + r.width + 0.26, 0.6, r.z + r.depth / 2 - 0.5, 0.12, 1.16, r.depth)
+    architecturalCube(layer, wallTop, 'wall', r.x + r.width / 2, 1.27, r.z - 0.45, r.width, 0.07, 0.17)
     // 踢脚线 + 门牌底板
-    cube(layer, medicalLine(), r.x + 0.6, 0.07, r.z + 0.6, 1.5, 0.02, 0.07)
+    architecturalCube(layer, medicalLine(), 'floor', r.x + 0.6, 0.07, r.z + 0.6, 1.5, 0.02, 0.07)
     textLabel(layer, `${r.room.code} · ${r.room.name}`, r.x + 2.9, 0.062, r.z + r.depth - 1.1, 4.8, 0.62)
   }
 
@@ -384,24 +509,25 @@ function buildHospitalShell() {
     const d = building.depth
 
     // 剖切面：只在背面与两侧包玻璃，正面永不封闭
-    cube(shell, glass, w / 2, height / 2, 0.04, w, height, 0.06)
-    cube(shell, glass, 0.03, height / 2, d / 2, 0.06, height, d)
-    cube(shell, glass, w - 0.03, height / 2, d / 2, 0.06, height, d)
+    architecturalCube(shell, glass, 'glass', w / 2, height / 2, 0.04, w, height, 0.06)
+    architecturalCube(shell, glass, 'glass', 0.03, height / 2, d / 2, 0.06, height, d)
+    architecturalCube(shell, glass, 'glass', w - 0.03, height / 2, d / 2, 0.06, height, d)
 
     // 角柱
-    for (const x of [0, w]) for (const z of [0, d]) cube(shell, edge, x, height / 2, z, 0.22, height, 0.22)
+    for (const x of [0, w])
+      for (const z of [0, d]) architecturalCube(shell, edge, 'frame', x, height / 2, z, 0.22, height, 0.22)
     // 每层结构环梁
     for (let i = 0; i <= building.floors.length; i++) {
       const y = i * FLOOR_HEIGHT
-      cube(shell, edge, w / 2, y, 0.08, w, 0.18, 0.15)
-      cube(shell, edge, 0.06, y, d / 2, 0.15, 0.18, d)
-      cube(shell, edge, w - 0.06, y, d / 2, 0.15, 0.18, d)
+      architecturalCube(shell, edge, 'frame', w / 2, y, 0.08, w, 0.18, 0.15)
+      architecturalCube(shell, edge, 'frame', 0.06, y, d / 2, 0.15, 0.18, d)
+      architecturalCube(shell, edge, 'frame', w - 0.06, y, d / 2, 0.15, 0.18, d)
     }
     // 顶部开敞檐口（只做周边梁，不封屋面，否则俯视时挡住上层床位）
-    cube(shell, edge, w / 2, height + 0.24, 0, w, 0.26, 0.28)
-    cube(shell, edge, w / 2, height + 0.24, d, w, 0.26, 0.28)
-    cube(shell, edge, 0, height + 0.24, d / 2, 0.28, 0.26, d)
-    cube(shell, edge, w, height + 0.24, d / 2, 0.28, 0.26, d)
+    architecturalCube(shell, edge, 'frame', w / 2, height + 0.24, 0, w, 0.26, 0.28)
+    architecturalCube(shell, edge, 'frame', w / 2, height + 0.24, d, w, 0.26, 0.28)
+    architecturalCube(shell, edge, 'frame', 0, height + 0.24, d / 2, 0.28, 0.26, d)
+    architecturalCube(shell, edge, 'frame', w, height + 0.24, d / 2, 0.28, 0.26, d)
     // 雨棚 + 医院标识
     cube(shell, white, w / 2, height + 0.6, 0.5, 4.4, 0.64, 0.8)
     cube(shell, material('medical-sign', '#3f9fab'), w / 2, height + 1.02, 0.51, 1.4, 0.09, 0.52)
@@ -415,7 +541,185 @@ function markShadowsDirty() {
   if (renderer) renderer.shadowMap.needsUpdate = true
 }
 
+/* ------------------------- 悬停：遮挡探测与动画 ------------------------- */
+
+function stopEffects() {
+  if (effectFrame) cancelAnimationFrame(effectFrame)
+  effectFrame = 0
+  lastEffectTime = 0
+}
+
+/** 沿父链检查可见性：被筛选隐藏或所在楼层不可见的床不算命中。 */
+function isVisibleObject(obj: THREE.Object3D) {
+  let node: THREE.Object3D | null = obj
+  while (node) {
+    if (!node.visible) return false
+    node = node.parent
+  }
+  return true
+}
+
+/**
+ * 计算每块建筑构件的目标不透明度。
+ *
+ * 从被悬停床位的**屏幕投影位置**反向投射射线（而不是从相机目标点），
+ * 只把「相机与该床位之间」被穿过的构件标记为需要淡化；正交视角下同样成立，
+ * 且能正确命中床位上方楼层的楼板。没有构件挡住床位时，全部保持原外观。
+ */
+function updateOcclusionTargets() {
+  let blocked = new Set<THREE.Mesh>()
+  const item = hoveredId === null ? null : selectable.get(hoveredId)
+  if (item && camera && root && isVisibleObject(item.group)) {
+    const center = item.group.localToWorld(new THREE.Vector3(0, 0.74 - item.lift, 0))
+    worldPosition.copy(center).project(camera)
+    if (Math.abs(worldPosition.x) <= 1 && Math.abs(worldPosition.y) <= 1) {
+      occlusionNdc.set(worldPosition.x, worldPosition.y)
+      occlusionRaycaster.setFromCamera(occlusionNdc, camera)
+      const length = center.clone().sub(occlusionRaycaster.ray.origin).dot(occlusionRaycaster.ray.direction)
+      if (length > 0) {
+        const hits = occlusionRaycaster.intersectObjects(occlusionMeshes, false)
+        blocked = new Set(
+          hits
+            .filter((h) => h.distance < length - 0.09 && isVisibleObject(h.object))
+            .map((h) => h.object as THREE.Mesh),
+        )
+      }
+    }
+  }
+  for (const surface of occludingSurfaces)
+    surface.target = blocked.has(surface.mesh) ? surface.faded : surface.original
+}
+
+function reduceMotion() {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+/**
+ * 单一 RAF 循环：床体弹簧升降 + 颜色/发光/框线/床垫过渡 + 遮挡透明度过渡。
+ *
+ * 「实时替换目标」而不是为每张床排队动画：hoveredId 改变时立刻改写目标值，
+ * 当前值从上一次的位置连续趋近，因此快速划过 30~50 次也不会累积动画或颜色串床。
+ * 所有值都被缓动夹在起止之间且收敛后吸附，稳定后自动停帧。
+ */
+function animateEffects(now: number) {
+  effectFrame = 0
+  const dt = lastEffectTime
+    ? Math.min(0.045, Math.max(0.001, (now - lastEffectTime) / 1000))
+    : 1 / 60
+  lastEffectTime = now
+  let active = false
+  let lifting = false
+
+  for (const [id, item] of selectable) {
+    const hovering = id === hoveredId && isVisibleObject(item.group)
+    const selected = id === props.selectedId
+    const elevation = hovering ? HOVER_LIFT : 0
+    // 轻微过阻尼弹簧：落下有回弹感，快速换目标时也不会瞬移
+    const stiffness = 155
+    const damping = 24
+    item.velocity += (elevation - item.lift) * stiffness * dt
+    item.velocity *= Math.exp(-damping * dt)
+    item.lift += item.velocity * dt
+    if (isNear(item.lift, elevation, 0.0015) && Math.abs(item.velocity) < 0.007) {
+      item.lift = elevation
+      item.velocity = 0
+    }
+    if (item.lift !== 0) lifting = true
+    item.group.position.y = item.lift
+
+    item.glow = easedApproach(item.glow, hovering ? 1 : 0, dt, 13)
+    if (isNear(item.glow, hovering ? 1 : 0, 0.003)) item.glow = hovering ? 1 : 0
+    item.accent.color.copy(item.restColor).lerp(item.hoverColor, item.glow)
+    item.surface.color.copy(item.surfaceRest).lerp(item.surfaceHover, item.glow * 0.7)
+    item.accent.emissive.copy(item.hoverColor).multiplyScalar(item.glow * 0.16)
+    item.accent.emissiveIntensity = 0.7
+
+    const outlineAlpha = hovering ? 0.92 : selected ? 0.63 : 0
+    item.outlineMaterial.opacity = easedApproach(item.outlineMaterial.opacity, outlineAlpha, dt, 13)
+    if (isNear(item.outlineMaterial.opacity, outlineAlpha, 0.004))
+      item.outlineMaterial.opacity = outlineAlpha
+    item.outline.visible = item.outlineMaterial.opacity > 0.009
+
+    if (
+      item.lift !== elevation ||
+      Math.abs(item.velocity) > 0.007 ||
+      item.glow !== (hovering ? 1 : 0) ||
+      item.outlineMaterial.opacity !== outlineAlpha
+    )
+      active = true
+  }
+
+  for (const surface of occludingSurfaces) {
+    const mat = surface.material
+    mat.opacity = easedApproach(mat.opacity, surface.target, dt, 10)
+    if (isNear(mat.opacity, surface.target, 0.004)) mat.opacity = surface.target
+    // 淡出期间需要 transparent；恢复不透明后把 depthWrite 打开，
+    // 否则会残留错误的深度排序，看起来像「透明没恢复」。
+    const transparent = mat.opacity < 0.995 || surface.original < 0.995
+    if (mat.transparent !== transparent || mat.depthWrite !== !transparent) {
+      mat.transparent = transparent
+      mat.depthWrite = !transparent
+      mat.needsUpdate = true
+    }
+    if (mat.opacity !== surface.target) active = true
+  }
+
+  // 床体浮起会改变投影，阴影贴图是手动重算的，这里只在有床在运动时刷新
+  if (lifting) markShadowsDirty()
+  render()
+  if (active) effectFrame = requestAnimationFrame(animateEffects)
+  else lastEffectTime = 0
+}
+
+/** 减弱动效路径：直接落到目标状态，不做动画但保留状态与遮挡语义。 */
+function animateEffectsReduced() {
+  for (const [id, item] of selectable) {
+    const on = id === hoveredId && isVisibleObject(item.group)
+    item.lift = on ? HOVER_LIFT : 0
+    item.velocity = 0
+    item.group.position.y = item.lift
+    item.glow = on ? 1 : 0
+    item.accent.color.copy(on ? item.hoverColor : item.restColor)
+    item.surface.color.copy(item.surfaceRest).lerp(item.surfaceHover, on ? 0.7 : 0)
+    item.accent.emissive.copy(item.hoverColor).multiplyScalar(on ? 0.16 : 0)
+    const alpha = on ? 0.92 : id === props.selectedId ? 0.63 : 0
+    item.outlineMaterial.opacity = alpha
+    item.outline.visible = alpha > 0
+  }
+  for (const s of occludingSurfaces) {
+    s.material.opacity = s.target
+    const transparent = s.target < 0.995 || s.original < 0.995
+    s.material.transparent = transparent
+    s.material.depthWrite = !transparent
+    s.material.needsUpdate = true
+  }
+  render()
+}
+
+function startEffects() {
+  if (!initialized) return
+  if (reduceMotion()) {
+    stopEffects()
+    animateEffectsReduced()
+    return
+  }
+  if (!effectFrame) {
+    lastEffectTime = 0
+    effectFrame = requestAnimationFrame(animateEffects)
+  }
+}
+
 function clearScene() {
+  // 场景重建前先停掉效果循环并清空悬停态：否则旧 selectable 的 RAF 会
+  // 继续写已 dispose 的材质，触发 WebGL 报错。
+  stopEffects()
+  if (hoveredId !== null) {
+    emit('hover', null, { x: 0, y: 0 })
+    hoveredId = null
+  }
   if (root && scene) {
     root.traverse((obj) => {
       if (obj instanceof THREE.Mesh && !sharedGeometries.has(obj.geometry)) obj.geometry.dispose()
@@ -429,6 +733,8 @@ function clearScene() {
   selectable.clear()
   floors.clear()
   shells.length = 0
+  occludingSurfaces.length = 0
+  occlusionMeshes.length = 0
 }
 
 function rebuild() {
@@ -448,11 +754,25 @@ function rebuild() {
 
 function updateVisibility() {
   const ids = new Set(props.visibleIds)
-  for (const [id, item] of selectable) item.group.visible = ids.has(id)
+  for (const [id, item] of selectable) {
+    item.group.visible = ids.has(id)
+    // 拾取体挂在楼层 Group 上（不随浮起动画移动），因此必须**单独**跟随筛选隐藏，
+    // 否则被筛掉的床仍能被射线命中、点开抽屉。
+    item.pick.visible = ids.has(id)
+  }
+  // 被筛掉的床不可能继续悬停：清空悬停态，否则会残留浮起与遮挡淡化
+  if (hoveredId !== null && !ids.has(hoveredId)) {
+    hoveredId = null
+    emit('hover', null, { x: 0, y: 0 })
+  }
+  updateOcclusionTargets()
+  startEffects()
 }
 
+/** 高亮状态由效果循环按目标值缓动推进，这里只负责驱动它。 */
 function updateHighlights() {
-  for (const [id, item] of selectable) item.outline.visible = id === props.selectedId || id === hoveredId
+  updateOcclusionTargets()
+  startEffects()
 }
 
 function render() {
@@ -563,6 +883,11 @@ function applyMode(animated = true) {
       const b = targets.get(key) || 0
       group.position.y = a + (b - a) * e
     }
+    // 楼层在移动，遮挡关系每帧都在变，悬停目标需要跟着重算
+    if (hoveredId !== null) {
+      updateOcclusionTargets()
+      startEffects()
+    }
     render()
     if (pct < 1) {
       sceneTween = requestAnimationFrame(frame)
@@ -586,13 +911,17 @@ function applyMode(animated = true) {
 
 /* --------------------------------- 拾取 --------------------------------- */
 
-function isPickVisible(mesh: THREE.Object3D) {
-  let obj: THREE.Object3D | null = mesh
-  while (obj) {
-    if (!obj.visible) return false
-    obj = obj.parent
+/** 相机平移/缩放会改变遮挡关系，因此重算淡化目标而不是沿用上一帧结果。 */
+function onCameraChange() {
+  if (hoveredId !== null) {
+    updateOcclusionTargets()
+    startEffects()
   }
-  return true
+  render()
+}
+
+function isPickVisible(mesh: THREE.Object3D) {
+  return isVisibleObject(mesh)
 }
 
 function pick(e: PointerEvent | MouseEvent): WardBed | null {
@@ -616,6 +945,7 @@ function pointerMove(e: PointerEvent) {
   const next = bed?.id ?? null
   if (next !== hoveredId) {
     hoveredId = next
+    updateOcclusionTargets()
     updateHighlights()
     render()
   }
@@ -626,6 +956,7 @@ function pointerMove(e: PointerEvent) {
 
 function pointerLeave() {
   hoveredId = null
+  updateOcclusionTargets()
   updateHighlights()
   emit('hover', null, { x: 0, y: 0 })
   render()
@@ -689,7 +1020,7 @@ function initialize() {
     controls.screenSpacePanning = true
     controls.minZoom = 0.26
     controls.maxZoom = 4.5
-    controls.addEventListener('change', render)
+    controls.addEventListener('change', onCameraChange)
 
     scene.add(new THREE.HemisphereLight(0xf0f7ff, 0xa9b8c6, 1.5))
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.5)
@@ -731,6 +1062,7 @@ function initialize() {
 function destroy() {
   if (animationFrame) cancelAnimationFrame(animationFrame)
   if (sceneTween) cancelAnimationFrame(sceneTween)
+  stopEffects()
   observer?.disconnect()
   observer = undefined
   if (renderer) {
@@ -739,7 +1071,7 @@ function destroy() {
     renderer.domElement.removeEventListener('pointerdown', pointerStart)
     renderer.domElement.removeEventListener('click', click)
   }
-  controls?.removeEventListener('change', render)
+  controls?.removeEventListener('change', onCameraChange)
   controls?.dispose()
   controls = undefined
   clearScene()
@@ -775,7 +1107,12 @@ watch(
 watch(
   () => [props.viewMode, props.focusFloor],
   () => {
-    if (initialized) applyMode()
+    // 切换观察模式前先解除悬停：楼层可见性与位置都要变，
+    // 留着旧悬停会短暂点亮一张已经不在画面里的床。
+    if (initialized) {
+      pointerLeave()
+      applyMode()
+    }
   },
 )
 watch(
