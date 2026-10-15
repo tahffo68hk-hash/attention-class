@@ -16,7 +16,11 @@
  *  5. 患者几何下移贴合床垫与枕头，避免「人浮在床上/穿进床垫」；
  *  6. 合并 Hover Visual V3：按视线探测并淡化遮挡构件、床位弹性浮起、
  *     每床独立材质做发光/框线/床垫过渡；**保留**上述阴影、曝光与几何加固，
- *     并修掉交付包漏传 surfaceRest/surfaceHover 导致运行时报错的缺陷。
+ *     并修掉交付包漏传 surfaceRest/surfaceHover 导致运行时报错的缺陷；
+ *  7. Spatial / Simulation V1：建筑几何改由 scene-layout.ts 的参数化布局给出
+ *     （中央走廊 + 走廊两侧镜像病房 + 门洞 + 床位按南北转向），
+ *     并叠加只读沙盘的轮廓提示（候选青 / 模拟命中金 / 假设停用灰）。
+ *     叠加层**只改描边**，床位五态主色与业务状态永不被覆盖。
  *
  * Hover V3 的实现要点（均为纯视觉，不触碰业务状态）：
  * - 拾取体固定挂在楼层 Group，可见病床单独沿 Y 浮起，动画不移动命中区域；
@@ -56,6 +60,14 @@ const props = defineProps<{
   focusFloor: string
   /** 由外层传入的当前主题（影响曝光） */
   dark?: boolean
+  /** 沙盘 What-if 假设中临时停用的床位（灰色轮廓，不改变真实主状态色） */
+  simulationUnavailableIds?: number[]
+  /** 沙盘候选床位（青色轮廓） */
+  simulationCandidateIds?: number[]
+  /** 当前模拟方案命中的床位（金色轮廓） */
+  simulationAssignedIds?: number[]
+  /** 首个虚构申请得分最高的床位（更亮的金色） */
+  simulationTopBedId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -316,9 +328,19 @@ function buildPatient(group: THREE.Group) {
   void pillow
 }
 
-function buildBed(floorGroup: THREE.Group, bed: WardBed, x: number, z: number, assignedFloor: string) {
+function buildBed(
+  floorGroup: THREE.Group,
+  bed: WardBed,
+  x: number,
+  z: number,
+  assignedFloor: string,
+  orientation = 0,
+) {
   const bedGroup = new THREE.Group()
   bedGroup.position.set(x, 0, z)
+  // 参数化布局下南北病房镜像排布：南侧整房旋转 π，使床头一律朝外侧墙体。
+  // 床位长轴沿 Z，绕 Y 旋转 π 后包围盒不变，因此固定拾取体无需跟着旋转。
+  bedGroup.rotation.y = orientation
   floorGroup.add(bedGroup)
 
   const metal = material('bed-metal', '#b3c1cd', { metalness: 0.62, roughness: 0.3 })
@@ -455,7 +477,19 @@ function buildFloor(f: SceneFloor) {
   // 结构层：楼板 + 面层 + 沿边梁
   architecturalCube(layer, slab, 'slab', f.width / 2, -0.24, f.depth / 2, f.width, 0.44, f.depth)
   architecturalCube(layer, floorMat, 'floor', f.width / 2, -0.004, f.depth / 2, f.width, 0.055, f.depth)
-  architecturalCube(layer, corridor, 'floor', f.width / 2, 0.026, f.depth - 1.2, f.width - 1, 0.035, 1.5)
+  // 中央交通轴：逐层共用同一走廊轴线与宽度（scene-layout 给出的 f.corridorZ/corridorWidth），
+  // 这是「所有楼层建筑轴线一致」在几何上的落点。
+  architecturalCube(
+    layer,
+    corridor,
+    'floor',
+    f.width / 2,
+    0.026,
+    f.corridorZ,
+    f.width - 0.5,
+    0.044,
+    f.corridorWidth,
+  )
   architecturalCube(layer, steel, 'frame', f.width / 2, -0.03, f.depth, f.width, 0.13, 0.08)
 
   // 玻璃幕墙只做后墙与两侧，正面完全剖开（否则挡住全部床位）
@@ -468,17 +502,23 @@ function buildFloor(f: SceneFloor) {
     architecturalCube(layer, steel, 'frame', x, 1.93, 0.36, 0.05, 3.8, 0.07)
 
   for (const r of f.rooms) {
-    // 病房隔墙：正面（朝镜头一侧）开放，只留矮墙与门垛，保证床品可见
-    architecturalCube(layer, wall, 'wall', r.x + r.width / 2, 0.64, r.z - 0.45, r.width, 1.24, 0.13)
-    architecturalCube(layer, wall, 'wall', r.x - 0.28, 0.6, r.z + r.depth / 2 - 0.5, 0.12, 1.16, r.depth)
-    architecturalCube(layer, wall, 'wall', r.x + r.width + 0.26, 0.6, r.z + r.depth / 2 - 0.5, 0.12, 1.16, r.depth)
-    architecturalCube(layer, wallTop, 'wall', r.x + r.width / 2, 1.27, r.z - 0.45, r.width, 0.07, 0.17)
-    // 踢脚线 + 门牌底板
-    architecturalCube(layer, medicalLine(), 'floor', r.x + 0.6, 0.07, r.z + 0.6, 1.5, 0.02, 0.07)
-    textLabel(layer, `${r.room.code} · ${r.room.name}`, r.x + 2.9, 0.062, r.z + r.depth - 1.1, 4.8, 0.62)
+    // 病房是规则模块：三面隔墙 + 朝中央走廊的两段前墙，中间留出 2.4 单位门洞。
+    // 北侧病房的「背面」在 -Z，南侧镜像到 +Z，因此门一律朝走廊、床品不被实墙挡住。
+    const back = r.side === 'north' ? r.z : r.z + r.depth
+    const front = r.side === 'north' ? r.z + r.depth : r.z
+    const center = r.x + r.width / 2
+    architecturalCube(layer, wall, 'wall', center, 0.72, back, r.width, 1.43, 0.14)
+    architecturalCube(layer, wall, 'wall', r.x, 0.69, r.z + r.depth / 2, 0.13, 1.37, r.depth)
+    architecturalCube(layer, wall, 'wall', r.x + r.width, 0.69, r.z + r.depth / 2, 0.13, 1.37, r.depth)
+    architecturalCube(layer, wall, 'wall', r.x + 2.45, 0.68, front, 4.9, 1.35, 0.12)
+    architecturalCube(layer, wall, 'wall', r.x + r.width - 2.45, 0.68, front, 4.9, 1.35, 0.12)
+    architecturalCube(layer, wallTop, 'wall', center, 1.44, back, r.width, 0.075, 0.16)
+    // 门洞地面装饰线 + 病房牌（贴地，位于房间中轴）
+    architecturalCube(layer, medicalLine(), 'floor', center, 0.065, front, 0.6, 0.016, 0.18)
+    textLabel(layer, `${r.room.code} · ${r.room.name}`, r.x + 3.0, 0.065, r.z + r.depth / 2, 5.0, 0.6)
   }
 
-  for (const item of f.beds) buildBed(layer, item.bed, item.x, item.z, f.key)
+  for (const item of f.beds) buildBed(layer, item.bed, item.x, item.z, f.key, item.orientation)
 
   // 楼层侧标（悬浮在楼板外侧，不占室内空间）
   const side = new THREE.Group()
@@ -625,6 +665,21 @@ function animateEffects(now: number) {
   for (const [id, item] of selectable) {
     const hovering = id === hoveredId && isVisibleObject(item.group)
     const selected = id === props.selectedId
+    // 沙盘叠加层只改描边色与透明度，**绝不覆盖床位主状态色**：
+    // 真实业务状态（五态）永远优先，模拟结果只是叠加的轮廓提示。
+    const assigned = props.simulationAssignedIds?.includes(id) ?? false
+    const candidate = props.simulationCandidateIds?.includes(id) ?? false
+    const top = props.simulationTopBedId === id
+    const unavailable = props.simulationUnavailableIds?.includes(id) ?? false
+    item.outlineMaterial.color.set(
+      unavailable
+        ? '#64748B'
+        : assigned
+          ? '#E5B348'
+          : candidate
+            ? '#0C9D9A'
+            : sceneBedPalette[item.bed.status].outline,
+    )
     const elevation = hovering ? HOVER_LIFT : 0
     // 轻微过阻尼弹簧：落下有回弹感，快速换目标时也不会瞬移
     const stiffness = 155
@@ -646,7 +701,20 @@ function animateEffects(now: number) {
     item.accent.emissive.copy(item.hoverColor).multiplyScalar(item.glow * 0.16)
     item.accent.emissiveIntensity = 0.7
 
-    const outlineAlpha = hovering ? 0.92 : selected ? 0.63 : 0
+    // 悬停最亮 > 模拟命中 > 选中 / 模拟首选 > 临时停用 > 普通候选
+    const outlineAlpha = hovering
+      ? 0.92
+      : selected
+        ? 0.75
+        : unavailable
+          ? 0.64
+          : assigned
+            ? 0.82
+            : top
+              ? 0.75
+              : candidate
+                ? 0.5
+                : 0
     item.outlineMaterial.opacity = easedApproach(item.outlineMaterial.opacity, outlineAlpha, dt, 13)
     if (isNear(item.outlineMaterial.opacity, outlineAlpha, 0.004))
       item.outlineMaterial.opacity = outlineAlpha
@@ -687,6 +755,19 @@ function animateEffects(now: number) {
 function animateEffectsReduced() {
   for (const [id, item] of selectable) {
     const on = id === hoveredId && isVisibleObject(item.group)
+    const assigned = props.simulationAssignedIds?.includes(id) ?? false
+    const candidate = props.simulationCandidateIds?.includes(id) ?? false
+    const top = props.simulationTopBedId === id
+    const unavailable = props.simulationUnavailableIds?.includes(id) ?? false
+    item.outlineMaterial.color.set(
+      unavailable
+        ? '#64748B'
+        : assigned
+          ? '#E5B348'
+          : candidate
+            ? '#0C9D9A'
+            : sceneBedPalette[item.bed.status].outline,
+    )
     item.lift = on ? HOVER_LIFT : 0
     item.velocity = 0
     item.group.position.y = item.lift
@@ -694,7 +775,24 @@ function animateEffectsReduced() {
     item.accent.color.copy(on ? item.hoverColor : item.restColor)
     item.surface.color.copy(item.surfaceRest).lerp(item.surfaceHover, on ? 0.7 : 0)
     item.accent.emissive.copy(item.hoverColor).multiplyScalar(on ? 0.16 : 0)
-    const alpha = on ? 0.92 : id === props.selectedId ? 0.63 : 0
+    // [LOCAL HARDENING 2026-10-15] 透明度优先级必须与 animateEffects 逐项一致：
+    // 悬停 > 选中 > 沙盘临时停用 > 沙盘命中 > 沙盘首选 > 沙盘候选 > 不显示。
+    // 交付版本这里漏了 unavailable 与 top —— 在「减弱动效」路径下，一张仅被
+    // What-if 临时停用（且不在候选集）的床会拿到灰色色值却 alpha=0，
+    // 于是 3D 上灰色轮廓整块消失，与交付说明里「保留状态语义」的要求不符。
+    const alpha = on
+      ? 0.92
+      : id === props.selectedId
+        ? 0.75
+        : unavailable
+          ? 0.64
+          : assigned
+            ? 0.82
+            : top
+              ? 0.75
+              : candidate
+                ? 0.5
+                : 0
     item.outlineMaterial.opacity = alpha
     item.outline.visible = alpha > 0
   }
@@ -1168,6 +1266,19 @@ watch(
     updateHighlights()
     if (id != null) focusBed(id)
     else render()
+  },
+)
+// 沙盘叠加层变化（候选/命中/假设停用）：只重算描边与遮挡，不重建场景
+watch(
+  () => [
+    props.simulationCandidateIds,
+    props.simulationAssignedIds,
+    props.simulationUnavailableIds,
+    props.simulationTopBedId,
+  ],
+  () => {
+    updateHighlights()
+    render()
   },
 )
 watch(

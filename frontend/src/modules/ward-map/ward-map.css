@@ -907,3 +907,203 @@ html.theme-dark .wm-stage {
     grid-template-columns: 1fr;
   }
 }
+
+/* ================== 只读调度沙盘（Spatial / Simulation V1） ==================
+ * 与交付包的差异：交付版把这一块写进独立的 ward-polish.css 并硬编码浅色
+ * （#f1faf9 / #145d61 …）外加一份 .theme-dark 补丁；本仓库的约定是
+ * 「结构类名不变、颜色一律走令牌」，因此这里并入 ward-map.css 并全部改用令牌。
+ *
+ * 关键：一律引用**全局**令牌（--surface/--border/--muted/--primary…），
+ * 不要用本文件顶部挂在 .ward-map-page 上的 --wm-* 局部别名 ——
+ * 详情抽屉经 Modal 的 Teleport 挂到 <body>，取不到页面局部的变量。
+ * ========================================================================== */
+
+.wm-sandbox {
+  margin: 0 0 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(150deg, var(--surface-2), var(--surface) 72%);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.wm-sandbox-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wm-sandbox-head strong {
+  font-size: 16px;
+  color: var(--color-text);
+}
+
+.wm-sandbox-head p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
+.wm-sandbox-notice {
+  padding: 9px 12px;
+  border-radius: 7px;
+  background: var(--primary-subtle);
+  border: 1px solid var(--border);
+  color: var(--primary-strong);
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.wm-sandbox-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.wm-sandbox-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 112px;
+}
+
+.wm-sandbox-form label select,
+.wm-sandbox-form label input[type='number'] {
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--color-text);
+  max-width: 195px;
+}
+
+.wm-sandbox-form .wm-sandbox-check {
+  display: flex;
+  align-items: center;
+  min-width: auto;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.wm-sandbox-patients,
+.wm-sandbox-pairs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.wm-sandbox-patients > span,
+.wm-sandbox-pairs > span {
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.wm-sandbox-patients button,
+.wm-sandbox-note button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--primary);
+}
+
+.wm-sandbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.wm-sandbox-results {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.wm-sandbox-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.wm-sandbox-metrics > div {
+  padding: 9px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: grid;
+  gap: 5px;
+}
+
+.wm-sandbox-metrics small {
+  color: var(--muted);
+}
+
+.wm-sandbox-metrics strong {
+  font-size: 17px;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.wm-sandbox-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.wm-sandbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--border);
+}
+
+.wm-sandbox-row small {
+  color: var(--muted);
+}
+
+.wm-sandbox-row strong {
+  font-size: 12px;
+}
+
+.wm-sandbox-locate {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 8px;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wm-sandbox-locate:hover {
+  border-color: var(--primary);
+  background: var(--primary-subtle);
+}
+
+@media (max-width: 680px) {
+  .wm-sandbox-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wm-sandbox-head {
+    flex-wrap: wrap;
+  }
+
+  .wm-sandbox-form label {
+    min-width: 45%;
+  }
+}

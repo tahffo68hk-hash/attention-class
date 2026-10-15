@@ -28,12 +28,15 @@ import { RouterLink } from 'vue-router'
 
 import Modal from '@/components/Modal.vue'
 import WardScene3D from '@/components/WardScene3D.vue'
+import WardSimulationPanel from '@/components/WardSimulationPanel.vue'
 import type { BedStatusLogRead } from '@/api/types'
 import { labelOf } from '@/lib/labels'
 import { fetchBedLogs, fetchWardMap } from '@/modules/ward-map/api'
 import { demoSnapshot } from '@/modules/ward-map/demo'
 import { sceneBedPalette } from '@/modules/ward-map/hover-visual'
+import type { SandboxOutput } from '@/modules/ward-map/sandbox'
 import { floorKey } from '@/modules/ward-map/scene-layout'
+import { useAuth } from '@/stores/auth'
 import { filterMap, stateOrder, statusMeta } from '@/modules/ward-map/types'
 import type { BedState, SceneMode, WardBed, WardMapSnapshot } from '@/modules/ward-map/types'
 import '@/modules/ward-map/ward-map.css'
@@ -161,11 +164,67 @@ const warningCount = computed(() => visibleBeds.value.filter((b) => b.state_warn
 
 const isDemo = computed(() => mode.value === 'demo')
 
+/* ---------------------- 只读调度沙盘（Spatial / Simulation V1） ---------------------- */
+
+/**
+ * 沙盘与 3D 场景、二维床位列表、详情抽屉的联动。
+ *
+ * 边界：沙盘结果是**只读推演**，不是分配承诺。因此刷新真实业务快照或切换到
+ * 演示数据时一律退出沙盘并清空结果，避免旧结论继续被当成当前事实。
+ * 入口权限与后端一致（ADMIN / NURSE）——接口本身也会 403，不在前端伪造可用。
+ */
+const { canOperateAllocation } = useAuth()
+const sandboxActive = ref(false)
+const sandboxPlan = ref<SandboxOutput | null>(null)
+const sandboxSolution = ref<'greedy' | 'optimized'>('optimized')
+const canRunSandbox = computed(() => !isDemo.value && canOperateAllocation.value)
+
+/** 当前所选方案命中的床位（3D 金色轮廓 / 列表徽标） */
+const sandboxAssignedIds = computed(
+  () => sandboxPlan.value?.[sandboxSolution.value].pairs.map((p) => p.bed_id) ?? [],
+)
+/** 全部虚构申请的候选床位（3D 青色轮廓） */
+const sandboxCandidateIds = computed(() => [
+  ...new Set(sandboxPlan.value?.candidates.map((c) => c.bed_id) ?? []),
+])
+/** What-if 中临时停用的床位（3D 灰色轮廓） */
+const sandboxUnavailableIds = computed(() => sandboxPlan.value?.applied_unavailable_bed_ids ?? [])
+/** 首个虚构申请得分最高的床位（更亮的金色） */
+const sandboxTopBedId = computed(
+  () =>
+    sandboxPlan.value?.candidates
+      .filter((c) => c.scenario_id === 1)
+      .sort((a, b) => b.score - a.score)[0]?.bed_id ?? null,
+)
+
+function updateSandbox(data: SandboxOutput | null, method: 'greedy' | 'optimized') {
+  sandboxPlan.value = data
+  sandboxSolution.value = method
+}
+
+function exitSandbox() {
+  sandboxActive.value = false
+  sandboxPlan.value = null
+}
+
+/** 沙盘方案定位：先切到该床所在楼层并聚焦镜头，再打开详情抽屉。 */
+async function locateSandboxBed(id: number) {
+  const bed = allBeds.value.find((b) => b.id === id)
+  if (!bed) return
+  activeFloor.value = floorKey(bed.building, bed.floor)
+  viewMode.value = 'focus'
+  await nextTick()
+  sceneRef.value?.focusBed(id)
+  await selectBed(bed)
+}
+
 function fmtTime(value: string | null) {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 }
 
 async function load() {
+  // 真实快照一变，任何旧沙盘结论立即失效
+  exitSandbox()
   if (mode.value === 'demo') snapshot.value = null
   mode.value = 'live'
   loading.value = true
@@ -179,6 +238,7 @@ async function load() {
     }
     snapshot.value = result
     updateSelected()
+    sandboxPlan.value = null
     ensureActiveFloor()
   } catch (e) {
     if (thisRequest !== requestId) return
@@ -190,6 +250,8 @@ async function load() {
 }
 
 function setDemo() {
+  // 演示数据是合成快照，沙盘不能挂在它上面假装真实推演
+  exitSandbox()
   ++requestId
   loading.value = false
   error.value = ''
@@ -379,6 +441,16 @@ onBeforeUnmount(() => {
           </div>
           <div class="wm-actions">
             <button
+              v-if="canRunSandbox || sandboxActive"
+              class="btn btn--sm"
+              type="button"
+              :class="{ 'btn--primary': sandboxActive }"
+              :aria-pressed="sandboxActive"
+              @click="sandboxActive ? exitSandbox() : (sandboxActive = true)"
+            >
+              {{ sandboxActive ? '退出调度沙盘' : '◇ 调度模拟' }}
+            </button>
+            <button
               class="btn btn--sm"
               type="button"
               :disabled="webglFailed"
@@ -481,6 +553,15 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <WardSimulationPanel
+          :active="sandboxActive"
+          :beds="allBeds"
+          :available="canRunSandbox"
+          @result="updateSandbox"
+          @exit="exitSandbox"
+          @locate="locateSandboxBed"
+        />
+
         <div class="wm-stage">
           <div v-if="visibleBeds.length === 0" class="wm-empty">没有匹配的床位，请调整筛选条件。</div>
           <WardScene3D
@@ -493,6 +574,10 @@ onBeforeUnmount(() => {
             :focus-floor="activeFloor"
             :selected-id="selected?.id ?? null"
             :dark="dark"
+            :simulation-unavailable-ids="sandboxUnavailableIds"
+            :simulation-candidate-ids="sandboxCandidateIds"
+            :simulation-assigned-ids="sandboxAssignedIds"
+            :simulation-top-bed-id="sandboxTopBedId"
             @hover="onHover"
             @select="selectBed"
             @unavailable="webglFailed = true"
@@ -518,6 +603,7 @@ onBeforeUnmount(() => {
               <small v-if="b.status === 'OCCUPIED' && b.patient?.allocation_status === 'ADMITTED'">
                 ◉ 已有入住记录
               </small>
+              <small v-if="sandboxAssignedIds.includes(b.id)">◇ 模拟已匹配（非真实分配）</small>
             </button>
           </div>
           <div
@@ -592,6 +678,25 @@ onBeforeUnmount(() => {
       @close="closeDrawer"
     >
       <div v-if="selectedExists" class="wm-drawer-body">
+        <template v-if="sandboxActive && sandboxPlan">
+          <h3>沙盘模拟（只读结果）</h3>
+          <p class="wm-sandbox-notice">
+            {{
+              sandboxAssignedIds.includes(selectedExists.id)
+                ? '此床位出现在当前模拟方案中'
+                : '此床位不在当前模拟匹配结果中'
+            }}。不会修改真实床位或分配。
+          </p>
+          <div
+            v-for="c in sandboxPlan.candidates.filter((c) => c.bed_id === selectedExists!.id)"
+            :key="c.scenario_id"
+            class="wm-sandbox-row"
+          >
+            <strong>虚构申请 #{{ c.scenario_id }}：{{ c.score }} 分</strong>
+            <small>{{ Object.entries(c.score_items).map(([k, v]) => `${k}: ${v}`).join(' / ') }}</small>
+          </div>
+        </template>
+
         <div class="wm-drawer-header">
           <span class="wm-eyebrow">BED DETAILS</span>
           <h2>{{ selectedExists.code }}</h2>
