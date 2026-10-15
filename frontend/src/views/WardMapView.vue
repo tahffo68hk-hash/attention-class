@@ -27,12 +27,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import Modal from '@/components/Modal.vue'
+import WardBedEditor from '@/components/WardBedEditor.vue'
 import WardScene3D from '@/components/WardScene3D.vue'
 import WardSimulationPanel from '@/components/WardSimulationPanel.vue'
 import type { BedStatusLogRead } from '@/api/types'
 import { labelOf } from '@/lib/labels'
 import { fetchBedLogs, fetchWardMap } from '@/modules/ward-map/api'
 import { demoSnapshot } from '@/modules/ward-map/demo'
+import type { EditorState } from '@/modules/ward-map/editor'
 import { sceneBedPalette } from '@/modules/ward-map/hover-visual'
 import type { SandboxOutput } from '@/modules/ward-map/sandbox'
 import { floorKey } from '@/modules/ward-map/scene-layout'
@@ -83,7 +85,45 @@ const stats = computed(() => {
   }))
 })
 
-const allBeds = computed(() => snapshot.value?.beds ?? [])
+/**
+ * 模拟空间编辑器（Ward Map Editor V2）—— **只读草稿**。
+ *
+ * 边界：草稿只存在于本页内存；合成床位 id 为负数，**永不**进入任何业务接口。
+ * 进入编辑态后会互斥退出沙盘，避免「编辑草稿」与「沙盘推演」两套叠加态互相污染。
+ */
+const editorActive = ref(false)
+const editorState = ref<EditorState | null>(null)
+
+/** 真实快照床位：编辑器与「重置草稿」始终以它为起点 */
+const realBeds = computed(() => snapshot.value?.beds ?? [])
+/** 展示用床位：编辑态下换成草稿（含合成床），其余情况与真实快照一致 */
+const allBeds = computed(() =>
+  editorActive.value && editorState.value ? editorState.value.items.map((i) => i.bed) : realBeds.value,
+)
+/** 草稿槽位姿态（床位 id -> 病房/槽位/旋转），只有编辑态才交给 3D 场景 */
+const editorPoses = computed(() =>
+  Object.fromEntries((editorState.value?.items ?? []).map((i) => [i.bed.id, i.pose])),
+)
+
+function editorUpdate(data: EditorState | null) {
+  editorState.value = data
+  selected.value = null
+  hovered.value = null
+}
+
+function exitEditor() {
+  editorActive.value = false
+  editorState.value = null
+  selected.value = null
+}
+
+function enterEditor() {
+  // 编辑与沙盘互斥：两套叠加态同时开启会让 3D 轮廓语义互相覆盖
+  exitSandbox()
+  editorActive.value = true
+  editorState.value = null
+  selected.value = null
+}
 
 const departments = computed(() => {
   const distinct = new Map<number, string>()
@@ -223,8 +263,9 @@ function fmtTime(value: string | null) {
 }
 
 async function load() {
-  // 真实快照一变，任何旧沙盘结论立即失效
+  // 真实快照一变，任何旧沙盘结论与编辑草稿立即失效
   exitSandbox()
+  exitEditor()
   if (mode.value === 'demo') snapshot.value = null
   mode.value = 'live'
   loading.value = true
@@ -250,8 +291,9 @@ async function load() {
 }
 
 function setDemo() {
-  // 演示数据是合成快照，沙盘不能挂在它上面假装真实推演
+  // 演示数据是合成快照，沙盘不能挂在它上面假装真实推演；编辑草稿同样作废
   exitSandbox()
+  exitEditor()
   ++requestId
   loading.value = false
   error.value = ''
@@ -303,6 +345,13 @@ async function selectBed(b: WardBed) {
   logsLoading.value = true
   // 选中即切到该床所在楼层，避免抽屉内容与镜头焦点错层
   activeFloor.value = floorKey(b.building, b.floor)
+  // 编辑态：只作为「选中编辑对象」，绝不读取真实床位流水、也不打开业务详情动作
+  if (editorActive.value) {
+    logs.value = []
+    logsLoading.value = false
+    logsError.value = '模拟编辑不读取或修改真实状态流水'
+    return
+  }
   if (mode.value === 'demo') {
     logs.value = []
     logsLoading.value = false
@@ -441,9 +490,19 @@ onBeforeUnmount(() => {
           </div>
           <div class="wm-actions">
             <button
+              class="btn btn--sm"
+              type="button"
+              :class="{ 'btn--primary': editorActive }"
+              :aria-pressed="editorActive"
+              @click="editorActive ? exitEditor() : enterEditor()"
+            >
+              {{ editorActive ? '退出模拟编辑' : '▦ 模拟编辑' }}
+            </button>
+            <button
               v-if="canRunSandbox || sandboxActive"
               class="btn btn--sm"
               type="button"
+              :disabled="editorActive"
               :class="{ 'btn--primary': sandboxActive }"
               :aria-pressed="sandboxActive"
               @click="sandboxActive ? exitSandbox() : (sandboxActive = true)"
@@ -553,6 +612,15 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <WardBedEditor
+          :active="editorActive"
+          :beds="realBeds"
+          :rooms="snapshot.rooms"
+          :selected-id="selected?.id ?? null"
+          @change="editorUpdate"
+          @close="exitEditor"
+        />
+
         <WardSimulationPanel
           :active="sandboxActive"
           :beds="allBeds"
@@ -574,12 +642,16 @@ onBeforeUnmount(() => {
             :focus-floor="activeFloor"
             :selected-id="selected?.id ?? null"
             :dark="dark"
+            :editor-mode="editorActive"
+            :cutaway="editorActive"
+            :editor-poses="editorActive ? editorPoses : undefined"
             :simulation-unavailable-ids="sandboxUnavailableIds"
             :simulation-candidate-ids="sandboxCandidateIds"
             :simulation-assigned-ids="sandboxAssignedIds"
             :simulation-top-bed-id="sandboxTopBedId"
             @hover="onHover"
             @select="selectBed"
+            @edit-select="selectBed"
             @unavailable="webglFailed = true"
           />
           <div

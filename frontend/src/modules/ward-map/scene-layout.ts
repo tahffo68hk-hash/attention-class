@@ -14,7 +14,9 @@
  * - 后端 `layout_kind` 仍为 `SIMULATED_GRID_V1`，空间仍是模拟排布；
  * - 床位评分用的是 `beds.position_x / position_y`，与本文件无关；
  * - 布局对入参顺序**不敏感**（排序后才落位），同一份快照必得同一组坐标，
- *   由 `verify_spatial_simulation.cjs` 与 `verify_v2_layout.cjs` 双向校验。
+ *   由 `verify_spatial_simulation.cjs` 与 `verify_v2_layout.cjs` 双向校验；
+ * - 第三参数 `poses` 只服务于**模拟编辑草稿**（槽位吸附 + 旋转增量），
+ *   它改变的是展示几何，不会写回任何业务表，也不会进入评分。
  */
 
 import type { WardBed, WardRoom } from './types'
@@ -97,7 +99,12 @@ export function floorKey(building: string, floor: number): string {
 /** 自然序比较：`10-2` 排在 `10-10` 之前，避免字典序把房号排乱。 */
 const compare = (a: string, b: string) => a.localeCompare(b, 'zh-CN', { numeric: true })
 
-export function createHospitalPlan(rooms: WardRoom[], beds: WardBed[]): HospitalPlan {
+export function createHospitalPlan(
+  rooms: WardRoom[],
+  beds: WardBed[],
+  /** 模拟编辑草稿的槽位姿态（床位 id -> 病房/槽位/旋转）。缺省时按床号顺排。 */
+  poses: Record<number, { wardId: number; slot: number; rotation: number }> = {},
+): HospitalPlan {
   const grouped = new Map<string, Map<number, WardRoom[]>>()
   for (const room of rooms) {
     let floors = grouped.get(room.building)
@@ -158,13 +165,18 @@ export function createHospitalPlan(rooms: WardRoom[], beds: WardBed[]): Hospital
           (a, b) => compare(a.code, b.code) || a.id - b.id,
         )
         items.forEach((bed, j) => {
-          const col = j % BED_COLUMNS
-          const row = Math.floor(j / BED_COLUMNS)
+          // 编辑草稿的槽位姿态优先于「按床号顺排」的默认落位：槽位是屏幕网格吸附
+          // 位置，不是医疗评分坐标；同样，旋转增量只是叠加在「床头朝外侧墙」的基准角上。
+          const pose = poses[bed.id]
+          const slot = pose && pose.wardId === room.ward_id ? pose.slot : j
+          const col = slot % BED_COLUMNS
+          const row = Math.floor(slot / BED_COLUMNS)
           const bedX = x + 2.35 + col * BED_PITCH_X
           // 北侧病房的床头朝外侧（-Z）墙；南侧整房旋转 π，床头同样朝外侧墙。
           const bedZ =
             side === 'north' ? z + 1.9 + row * BED_PITCH_Z : z + roomDepth - 1.9 - row * BED_PITCH_Z
-          const orientation = side === 'north' ? 0 : Math.PI
+          const orientation =
+            (side === 'north' ? 0 : Math.PI) + ((pose?.rotation || 0) * Math.PI) / 180
           sceneBeds.push({ bed, x: bedX, z: bedZ, floorKey: key, orientation })
           bedFloors[bed.id] = key
           // 轻微 Z 错层，避免上下层床位在正交视角下完全重叠

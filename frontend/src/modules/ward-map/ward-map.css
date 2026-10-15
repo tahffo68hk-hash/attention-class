@@ -1107,3 +1107,91 @@ html.theme-dark .wm-stage {
     min-width: 45%;
   }
 }
+
+
+/* ================== 三维模拟空间编辑器（Ward Map Editor V2，只读草稿） ==================
+ * 与交付包的差异：交付版自带一段 `<style scoped>` 并硬编码浅色
+ * （#f7fbff / #18384b / #d6e6ed …），在暗色主题下会是一块亮斑；
+ * 本仓库约定「结构类名走语义、颜色一律走全局令牌」，故移到本文件并改用令牌，
+ * 按钮复用全局 .btn 语义（.btn--primary 才是主按钮）。
+ * ========================================================================== */
+
+.wm-editor {
+  margin: 0 0 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(150deg, var(--surface-2), var(--surface) 72%);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.wm-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wm-editor-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.wm-editor-head strong {
+  font-size: 16px;
+  color: var(--color-text);
+}
+
+.wm-editor-head small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wm-editor-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.wm-editor-controls label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wm-editor-controls select,
+.wm-editor-controls input {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--color-text);
+  min-width: 110px;
+}
+
+.wm-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wm-editor-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.wm-editor-message {
+  margin: 0;
+  font-size: 12px;
+  color: var(--primary-strong);
+}
+
+.wm-editor-note {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+}

@@ -60,6 +60,15 @@ const props = defineProps<{
   focusFloor: string
   /** 由外层传入的当前主题（影响曝光） */
   dark?: boolean
+  /** 模拟编辑器是否接管交互：点击改为「选中编辑对象」而非「打开真实床位详情」 */
+  editorMode?: boolean
+  /** 编辑态剖切：淡化目标病房邻域的建筑构件，露出当前编辑的病房 */
+  cutaway?: boolean
+  /**
+   * 模拟编辑的槽位姿态（床位 id -> 病房/槽位/旋转）。
+   * **只影响展示几何**：槽位是屏幕网格吸附位置，不是医疗评分坐标。
+   */
+  editorPoses?: Record<number, { wardId: number; slot: number; rotation: number }>
   /** 沙盘 What-if 假设中临时停用的床位（灰色轮廓，不改变真实主状态色） */
   simulationUnavailableIds?: number[]
   /** 沙盘候选床位（青色轮廓） */
@@ -74,6 +83,8 @@ const emit = defineEmits<{
   (e: 'hover', bed: WardBed | null, screen: { x: number; y: number }): void
   (e: 'select', bed: WardBed): void
   (e: 'unavailable'): void
+  /** 编辑态下点击床位：交给编辑器处理，绝不触发真实床位管理 */
+  (e: 'edit-select', bed: WardBed): void
 }>()
 
 const viewport = ref<HTMLDivElement | null>(null)
@@ -635,6 +646,15 @@ function updateOcclusionTargets() {
       }
     }
   }
+  // 编辑态剖切：只淡化「目标病房邻域」的构件（同一层、同一高度带以内），
+  // 远处楼板与墙体保持完整 —— 既露出正在编辑的病房，又不把整栋楼拆掉。
+  if (props.cutaway && item) {
+    const focus = item.group.getWorldPosition(new THREE.Vector3())
+    for (const surface of occludingSurfaces) {
+      const here = surface.mesh.getWorldPosition(new THREE.Vector3())
+      if (here.distanceTo(focus) < 10.5 && here.y > focus.y - 0.9) blocked.add(surface.mesh)
+    }
+  }
   for (const surface of occludingSurfaces)
     surface.target = blocked.has(surface.mesh) ? surface.faded : surface.original
 }
@@ -855,7 +875,7 @@ function rebuild() {
   clearScene()
   root = new THREE.Group()
   scene.add(root)
-  plan = createHospitalPlan(props.rooms, props.beds)
+  plan = createHospitalPlan(props.rooms, props.beds, props.editorPoses)
   for (const f of plan.floors) buildFloor(f)
   buildHospitalShell()
   updateVisibility()
@@ -1065,7 +1085,7 @@ function pointerMove(e: PointerEvent) {
   }
   const bounds = viewport.value?.getBoundingClientRect()
   emit('hover', bed, { x: e.clientX - (bounds?.left || 0), y: e.clientY - (bounds?.top || 0) })
-  if (renderer) renderer.domElement.style.cursor = bed ? 'pointer' : 'grab'
+  if (renderer) renderer.domElement.style.cursor = bed ? (props.editorMode ? 'crosshair' : 'pointer') : 'grab'
 }
 
 function pointerLeave() {
@@ -1083,7 +1103,11 @@ function pointerStart(e: PointerEvent) {
 function click(e: MouseEvent) {
   if (pointerDown && Math.hypot(e.clientX - pointerDown.x, e.clientY - pointerDown.y) > 6) return
   const bed = pick(e)
-  if (bed) emit('select', bed)
+  // 编辑态下点击只交给编辑器：绝不走真实床位详情 / 业务接口。
+  if (bed) {
+    if (props.editorMode) emit('edit-select', bed)
+    else emit('select', bed)
+  }
 }
 
 function resize() {
@@ -1236,7 +1260,7 @@ onMounted(initialize)
 onBeforeUnmount(destroy)
 
 watch(
-  () => [props.beds, props.rooms],
+  () => [props.beds, props.rooms, props.editorPoses],
   () => {
     if (initialized) rebuild()
   },
@@ -1278,6 +1302,15 @@ watch(
   ],
   () => {
     updateHighlights()
+    render()
+  },
+)
+// 编辑态切换（进入/退出编辑、开关剖切）：只重算遮挡目标与描边，不重建场景
+watch(
+  () => [props.cutaway, props.editorMode],
+  () => {
+    updateOcclusionTargets()
+    startEffects()
     render()
   },
 )
