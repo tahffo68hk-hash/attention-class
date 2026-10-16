@@ -28,13 +28,14 @@ import { RouterLink } from 'vue-router'
 
 import Modal from '@/components/Modal.vue'
 import WardBedEditor from '@/components/WardBedEditor.vue'
+import WardBedManager from '@/components/WardBedManager.vue'
 import WardScene3D from '@/components/WardScene3D.vue'
 import WardSimulationPanel from '@/components/WardSimulationPanel.vue'
 import type { BedStatusLogRead } from '@/api/types'
 import { labelOf } from '@/lib/labels'
 import { fetchBedLogs, fetchWardMap } from '@/modules/ward-map/api'
 import { demoSnapshot } from '@/modules/ward-map/demo'
-import type { EditorState } from '@/modules/ward-map/editor'
+import type { EditPose, EditorState, Rotation } from '@/modules/ward-map/editor'
 import { sceneBedPalette } from '@/modules/ward-map/hover-visual'
 import type { SandboxOutput } from '@/modules/ward-map/sandbox'
 import { floorKey } from '@/modules/ward-map/scene-layout'
@@ -93,6 +94,35 @@ const stats = computed(() => {
  */
 const editorActive = ref(false)
 const editorState = ref<EditorState | null>(null)
+/** 三维编辑器面板实例：场景把拖放落点交回它执行 */
+const editorRef = ref<InstanceType<typeof WardBedEditor> | null>(null)
+const editTool = ref<'select' | 'add' | 'move'>('select')
+const editRoomId = ref(0)
+const editRotation = ref<Rotation>(0)
+
+/** 正式床位管理（仅 ADMIN、非演示数据）：与模拟编辑互斥 */
+const managerActive = ref(false)
+
+function onEditIntent(tool: 'select' | 'add' | 'move', roomId: number, rotation: Rotation) {
+  editTool.value = tool
+  editRoomId.value = roomId
+  editRotation.value = rotation
+}
+
+/** 场景拖放/点击落点 → 交回编辑器执行（这里是**唯一**修改草稿的入口） */
+function onEditPlace(pose: EditPose, bedId: number | null) {
+  editorRef.value?.placeFromScene(pose, bedId)
+}
+
+function onEditSelect(bed: WardBed) {
+  // 拖动工具下只做「选中编辑对象」，不打开真实床位详情
+  if (editTool.value === 'move') {
+    selected.value = bed
+    hovered.value = null
+    return
+  }
+  void selectBed(bed)
+}
 
 /** 真实快照床位：编辑器与「重置草稿」始终以它为起点 */
 const realBeds = computed(() => snapshot.value?.beds ?? [])
@@ -104,24 +134,49 @@ const allBeds = computed(() =>
 const editorPoses = computed(() =>
   Object.fromEntries((editorState.value?.items ?? []).map((i) => [i.bed.id, i.pose])),
 )
+/** 草稿当前的槽位占用（含真实床与草稿床）：交给 3D 做 Ghost 绿/红判定 */
+const editorOccupied = computed(() =>
+  (editorState.value?.items ?? []).map((i) => ({
+    bedId: i.bed.id,
+    wardId: i.pose.wardId,
+    slot: i.pose.slot,
+  })),
+)
 
 function editorUpdate(data: EditorState | null) {
   editorState.value = data
   selected.value = null
   hovered.value = null
+  // 供给变了，旧沙盘结论立即作废
+  sandboxPlan.value = null
 }
 
 function exitEditor() {
   editorActive.value = false
   editorState.value = null
   selected.value = null
+  editTool.value = 'select'
+  // 草稿已作废，挂在它上面的沙盘结果也必须一起撤
+  exitSandbox()
 }
 
 function enterEditor() {
+  managerActive.value = false
   // 编辑与沙盘互斥：两套叠加态同时开启会让 3D 轮廓语义互相覆盖
   exitSandbox()
   editorActive.value = true
   editorState.value = null
+  selected.value = null
+}
+
+/** 正式床位管理入口：与模拟编辑互斥，退出时不留叠加态 */
+function toggleManager() {
+  if (managerActive.value) {
+    managerActive.value = false
+    return
+  }
+  exitEditor()
+  managerActive.value = true
   selected.value = null
 }
 
@@ -213,7 +268,7 @@ const isDemo = computed(() => mode.value === 'demo')
  * 演示数据时一律退出沙盘并清空结果，避免旧结论继续被当成当前事实。
  * 入口权限与后端一致（ADMIN / NURSE）——接口本身也会 403，不在前端伪造可用。
  */
-const { canOperateAllocation } = useAuth()
+const { canOperateAllocation, isAdmin } = useAuth()
 const sandboxActive = ref(false)
 const sandboxPlan = ref<SandboxOutput | null>(null)
 const sandboxSolution = ref<'greedy' | 'optimized'>('optimized')
@@ -263,7 +318,8 @@ function fmtTime(value: string | null) {
 }
 
 async function load() {
-  // 真实快照一变，任何旧沙盘结论与编辑草稿立即失效
+  // 真实快照一变，任何旧沙盘结论、编辑草稿与管理态立即失效
+  managerActive.value = false
   exitSandbox()
   exitEditor()
   if (mode.value === 'demo') snapshot.value = null
@@ -291,7 +347,8 @@ async function load() {
 }
 
 function setDemo() {
-  // 演示数据是合成快照，沙盘不能挂在它上面假装真实推演；编辑草稿同样作废
+  // 演示数据是合成快照，沙盘不能挂在它上面假装真实推演；编辑草稿与正式管理同样作废
+  managerActive.value = false
   exitSandbox()
   exitEditor()
   ++requestId
@@ -335,6 +392,16 @@ function updateSelected() {
 function onHover(b: WardBed | null, p: { x: number; y: number }) {
   hovered.value = b
   hoverPos.value = p
+}
+
+/** 三维场景与二维列表统一的选择入口：管理态只做选中，绝不读取真实流水 */
+function onSelectBed(b: WardBed) {
+  if (managerActive.value) {
+    selected.value = b
+    hovered.value = null
+    return
+  }
+  void selectBed(b)
 }
 
 async function selectBed(b: WardBed) {
@@ -490,6 +557,16 @@ onBeforeUnmount(() => {
           </div>
           <div class="wm-actions">
             <button
+              v-if="isAdmin && !isDemo"
+              class="btn btn--sm"
+              type="button"
+              :class="{ 'btn--primary': managerActive }"
+              :aria-pressed="managerActive"
+              @click="toggleManager"
+            >
+              {{ managerActive ? '退出床位管理' : '⚙ 床位管理' }}
+            </button>
+            <button
               class="btn btn--sm"
               type="button"
               :class="{ 'btn--primary': editorActive }"
@@ -502,7 +579,6 @@ onBeforeUnmount(() => {
               v-if="canRunSandbox || sandboxActive"
               class="btn btn--sm"
               type="button"
-              :disabled="editorActive"
               :class="{ 'btn--primary': sandboxActive }"
               :aria-pressed="sandboxActive"
               @click="sandboxActive ? exitSandbox() : (sandboxActive = true)"
@@ -612,18 +688,40 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <WardBedManager
+          :active="managerActive"
+          :beds="realBeds"
+          :rooms="snapshot.rooms"
+          :selected-id="selected?.id ?? null"
+          @saved="load"
+          @close="managerActive = false"
+        />
+
         <WardBedEditor
+          ref="editorRef"
           :active="editorActive"
           :beds="realBeds"
           :rooms="snapshot.rooms"
           :selected-id="selected?.id ?? null"
           @change="editorUpdate"
+          @intent="onEditIntent"
           @close="exitEditor"
         />
+
+        <button
+          v-if="editorActive"
+          class="btn btn--sm"
+          type="button"
+          @click="sandboxActive = true"
+        >
+          ◇ 用当前编辑草稿重新计算调度（只读）
+        </button>
 
         <WardSimulationPanel
           :active="sandboxActive"
           :beds="allBeds"
+          :real-beds="realBeds"
+          :editor-state="editorActive ? editorState : null"
           :available="canRunSandbox"
           @result="updateSandbox"
           @exit="exitSandbox"
@@ -642,6 +740,10 @@ onBeforeUnmount(() => {
             :focus-floor="activeFloor"
             :selected-id="selected?.id ?? null"
             :dark="dark"
+            :edit-tool="editTool"
+            :edit-room-id="editRoomId"
+            :edit-rotation="editRotation"
+            :editor-occupied="editorOccupied"
             :editor-mode="editorActive"
             :cutaway="editorActive"
             :editor-poses="editorActive ? editorPoses : undefined"
@@ -650,8 +752,9 @@ onBeforeUnmount(() => {
             :simulation-assigned-ids="sandboxAssignedIds"
             :simulation-top-bed-id="sandboxTopBedId"
             @hover="onHover"
-            @select="selectBed"
-            @edit-select="selectBed"
+            @select="onSelectBed"
+            @edit-select="onEditSelect"
+            @edit-place="onEditPlace"
             @unavailable="webglFailed = true"
           />
           <div
@@ -666,7 +769,7 @@ onBeforeUnmount(() => {
               class="wm-list-bed"
               type="button"
               :class="{ 'wm-list-selected': selected?.id === b.id }"
-              @click="selectBed(b)"
+              @click="onSelectBed(b)"
             >
               <span class="wm-bed-dot" :style="{ background: sceneColor(b.status) }"></span>
               <strong>{{ b.code }}</strong>
@@ -734,7 +837,7 @@ onBeforeUnmount(() => {
               v-for="b in visibleBeds"
               :key="b.id"
               type="button"
-              @click="selectBed(b)"
+              @click="onSelectBed(b)"
             >
               {{ b.code }} · {{ statusMeta[b.status].label }}
             </button>
@@ -745,7 +848,7 @@ onBeforeUnmount(() => {
 
     <Modal
       variant="drawer"
-      :open="Boolean(selectedExists)"
+      :open="Boolean(selectedExists) && !managerActive && (!editorActive || editTool === 'select')"
       title="床位详情"
       @close="closeDrawer"
     >

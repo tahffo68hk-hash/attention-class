@@ -30,6 +30,8 @@ class WardMapBed(BaseModel):
     floor: int
     building: str
     simulated_position: Position
+    scene_slot: int | None = None
+    scene_rotation: int | None = None
     patient: PatientSummary | None = None
     # 数据异常不能被模拟人物模型掩盖
     state_warning: str | None = None

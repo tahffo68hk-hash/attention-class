@@ -18,9 +18,22 @@ export interface FictionalRequest {
   preferred_ward_id: number | null
 }
 
+/**
+ * 模拟新增床：`virtual_id` 为**负数**（永不对应真实床位），
+ * `template_bed_id` 指向同病房的真实床位，服务端借用它的床型/性别/隔离/费率
+ * 以及**用于评分的院内业务距离坐标** —— 这些是模拟代理值，不是 3D 展示坐标。
+ */
+export interface SyntheticBedInput {
+  virtual_id: number
+  template_bed_id: number
+  code: string
+  ward_id: number
+}
+
 export interface SandboxInput {
   scenario_kind: 'SYNTHETIC_ONLY'
   synthetic_requests: FictionalRequest[]
+  synthetic_beds: SyntheticBedInput[]
   unavailable_bed_ids: number[]
   ward_supply_cut: { ward_id: number; count: number } | null
 }

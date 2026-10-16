@@ -195,7 +195,7 @@ def scan_candidates(
         db.execute(
             select(Bed)
             .options(joinedload(Bed.ward), joinedload(Bed.department))
-            .where(Bed.department_id == request.department_id)
+            .where(Bed.department_id == request.department_id, Bed.retired_at.is_(None))
         )
         .unique()
         .scalars()

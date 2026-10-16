@@ -30,7 +30,7 @@ router = APIRouter(prefix="/dashboard", tags=["管理看板"])
 )
 def summary(db: DbSession, user: CurrentUser) -> DashboardSummary:
     status_rows = db.execute(
-        select(Bed.status, func.count(Bed.id)).group_by(Bed.status)
+        select(Bed.status, func.count(Bed.id)).where(Bed.retired_at.is_(None)).group_by(Bed.status)
     ).all()
     counts = {str(status): count for status, count in status_rows}
     total = sum(counts.values())
@@ -48,15 +48,15 @@ def summary(db: DbSession, user: CurrentUser) -> DashboardSummary:
     ).scalar_one()
 
     iso_total = db.execute(
-        select(func.count(Bed.id)).where(Bed.is_isolation.is_(True))
+        select(func.count(Bed.id)).where(Bed.is_isolation.is_(True), Bed.retired_at.is_(None))
     ).scalar_one()
     iso_available = db.execute(
-        select(func.count(Bed.id)).where(Bed.is_isolation.is_(True), Bed.status == BedStatus.AVAILABLE)
+        select(func.count(Bed.id)).where(Bed.is_isolation.is_(True), Bed.status == BedStatus.AVAILABLE, Bed.retired_at.is_(None))
     ).scalar_one()
     iso_in_use = db.execute(
         select(func.count(Bed.id)).where(
             Bed.is_isolation.is_(True),
-            Bed.status.in_([BedStatus.RESERVED, BedStatus.OCCUPIED]),
+            Bed.status.in_([BedStatus.RESERVED, BedStatus.OCCUPIED]),Bed.retired_at.is_(None),
         )
     ).scalar_one()
 
@@ -83,6 +83,7 @@ def summary(db: DbSession, user: CurrentUser) -> DashboardSummary:
             func.count(Bed.id),
         )
         .join(Bed, Bed.department_id == Department.id)
+        .where(Bed.retired_at.is_(None))
         .group_by(Department.id, Department.name, Bed.status)
     ).all()
     dept_map: dict[int, DepartmentBedStat] = {}

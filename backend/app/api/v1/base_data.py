@@ -21,7 +21,7 @@ from app.models.enums import (
     UserRole,
 )
 from app.models.allocation import BedAllocation
-from app.models.facility import Bed, Department, Ward
+from app.models.facility import Bed, BedSceneSlot, Department, Ward
 from app.models.patient import Patient
 from app.models.user import Doctor, User
 from app.schemas.common import MessageOut, Page
@@ -110,13 +110,13 @@ def list_wards(
 
     counts = dict(
         db.execute(
-            select(Bed.ward_id, func.count(Bed.id)).group_by(Bed.ward_id)
+            select(Bed.ward_id, func.count(Bed.id)).where(Bed.retired_at.is_(None)).group_by(Bed.ward_id)
         ).all()
     )
     avail = dict(
         db.execute(
             select(Bed.ward_id, func.count(Bed.id))
-            .where(Bed.status == BedStatus.AVAILABLE)
+            .where(Bed.status == BedStatus.AVAILABLE, Bed.retired_at.is_(None))
             .group_by(Bed.ward_id)
         ).all()
     )
@@ -191,7 +191,7 @@ def list_beds(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
 ):
-    stmt = select(Bed).options(joinedload(Bed.ward), joinedload(Bed.department))
+    stmt = select(Bed).options(joinedload(Bed.ward), joinedload(Bed.department)).where(Bed.retired_at.is_(None))
     if department_id:
         stmt = stmt.where(Bed.department_id == department_id)
     if ward_id:
@@ -246,7 +246,7 @@ def get_bed_detail(bed_id: int, db: DbSession, user: CurrentUser):
     dependencies=[Depends(require_roles(UserRole.ADMIN))],
 )
 def create_bed(payload: BedCreate, request: Request, db: DbSession, user: CurrentUser):
-    ward = db.get(Ward, payload.ward_id)
+    ward = db.execute(select(Ward).where(Ward.id == payload.ward_id).with_for_update()).scalar_one_or_none()
     if ward is None:
         raise NotFoundError(f"病房 #{payload.ward_id} 不存在")
     if db.execute(select(Bed).where(Bed.code == payload.code)).scalar_one_or_none():
@@ -269,6 +269,13 @@ def create_bed(payload: BedCreate, request: Request, db: DbSession, user: Curren
         status=BedStatus.AVAILABLE,
     )
     db.add(bed)
+    db.flush()
+    existing_slots=set(db.scalars(select(BedSceneSlot.slot).where(BedSceneSlot.ward_id==ward.id)).all())
+    scene_slot=0
+    while scene_slot in existing_slots:scene_slot+=1
+    if scene_slot>=max(12,((len(existing_slots)+2)//3)*3):
+        raise ConflictError(message='当前病房的 3D 槽位已满，请先明确扩容布局')
+    db.add(BedSceneSlot(bed_id=bed.id,ward_id=ward.id,slot=scene_slot,rotation=0))
     db.flush()
     record_audit(
         db,
@@ -349,6 +356,8 @@ def set_bed_status(
     bed = db.execute(select(Bed).where(Bed.id == bed_id).with_for_update()).scalar_one_or_none()
     if bed is None:
         raise NotFoundError(f"床位 #{bed_id} 不存在")
+    if bed.retired_at is not None:
+        raise StateTransitionError('已停用床位不能直接修改状态，请先通过床位管理恢复')
     from_status = str(bed.status)
     allowed = manual_allowed.get(from_status, set()) & BED_STATUS_TRANSITIONS.get(from_status, set())
     if payload.status not in allowed:

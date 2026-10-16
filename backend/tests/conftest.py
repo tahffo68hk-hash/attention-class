@@ -91,6 +91,7 @@ TABLES = [
     "bed_allocations",
     "preadmissions",
     "admission_requests",
+    "bed_scene_slots",
     "beds",
     "wards",
     "doctors",

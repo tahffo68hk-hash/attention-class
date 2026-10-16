@@ -15,10 +15,19 @@ class WardSupplyCut(BaseModel):
     ward_id: int = Field(gt=0, strict=True)
     count: int = Field(ge=1, le=20, strict=True)
 
+class SyntheticBed(BaseModel):
+    """Virtual supply only. Scoring location/cost/eligibility cloned from an existing template."""
+    model_config = ConfigDict(extra='forbid')
+    virtual_id: int = Field(lt=0, strict=True)
+    template_bed_id: int = Field(gt=0, strict=True)
+    code: str = Field(min_length=1, max_length=32)
+    ward_id: int = Field(gt=0, strict=True)
+
 class WardSandboxInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scenario_kind: Literal['SYNTHETIC_ONLY']
     synthetic_requests: list[FictionalRequest] = Field(min_length=1,max_length=30)
+    synthetic_beds: list[SyntheticBed] = Field(default_factory=list,max_length=20)
     unavailable_bed_ids: list[Annotated[int,Field(gt=0,strict=True)]] = Field(default_factory=list,max_length=100)
     ward_supply_cut: WardSupplyCut | None = None
 
@@ -28,6 +37,10 @@ class WardSandboxInput(BaseModel):
             raise ValueError('模拟申请序号不可重复')
         if len(set(self.unavailable_bed_ids)) != len(self.unavailable_bed_ids):
             raise ValueError('排除床位 ID 不可重复')
+        if len({b.virtual_id for b in self.synthetic_beds}) != len(self.synthetic_beds):
+            raise ValueError('模拟新增床位 ID 不可重复')
+        if len({b.code.lower() for b in self.synthetic_beds}) != len(self.synthetic_beds):
+            raise ValueError('模拟新增床位号不可重复')
         return self
 
 class SandboxCandidate(BaseModel):

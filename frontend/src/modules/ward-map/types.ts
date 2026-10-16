@@ -55,6 +55,12 @@ export interface WardBed {
   floor: number
   building: string
   simulated_position: Position
+  /**
+   * 正式持久化的**展示槽位**（房间网格位）与朝向。
+   * 只服务于三维编辑/管理的展示几何，**与评分用的 position_x/position_y 无关**。
+   */
+  scene_slot?: number | null
+  scene_rotation?: number | null
   patient: WardPatient | null
   state_warning: string | null
 }

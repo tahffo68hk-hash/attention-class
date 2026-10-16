@@ -22,8 +22,8 @@ router = APIRouter(prefix='/ward-map', tags=['床位态势图（只读）'])
 def get_ward_map(db: DbSession, user: CurrentUser) -> WardMapResponse:
     # Query 1: all beds and their departments/wards, without page truncation.
     beds = list(db.execute(
-        select(Bed).options(joinedload(Bed.ward), joinedload(Bed.department))
-        .order_by(Bed.department_id, Bed.ward_id, Bed.code, Bed.id)
+        select(Bed).options(joinedload(Bed.ward), joinedload(Bed.department), joinedload(Bed.scene_slot))
+        .where(Bed.retired_at.is_(None)).order_by(Bed.department_id, Bed.ward_id, Bed.code, Bed.id)
     ).unique().scalars())
     # Query 2: all ACTIVE allocations for visible beds, without N+1 queries.
     # No raw diagnosis, certificate number, phone number or identification data is selected.
@@ -81,7 +81,8 @@ def get_ward_map(db: DbSession, user: CurrentUser) -> WardMapResponse:
             ward_name=b.ward.name, department_id=b.department_id,
             department_name=b.department.name, building=b.ward.building,
             floor=b.floor, simulated_position=bed_pos[b.id], patient=patient,
-            state_warning=warning,
+            state_warning=warning, scene_slot=b.scene_slot.slot if b.scene_slot else None,
+            scene_rotation=b.scene_slot.rotation if b.scene_slot else None,
         ))
     return WardMapResponse(generated_at=datetime.now(timezone.utc),
                            beds=result_beds, rooms=list(rooms.values()),

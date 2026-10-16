@@ -18,6 +18,7 @@ from app.api.v1 import (
     assistant,
     ward_map,
     ward_sandbox,
+    ward_editor,
 )
 
 api_router = APIRouter()
@@ -41,5 +42,7 @@ api_router.include_router(audit.router)
 api_router.include_router(ward_map.router)
 # 三维调度沙盘（只读 What-if：复用正式硬约束/评分/求解器，零业务写入）
 api_router.include_router(ward_sandbox.router)
+# 床位正式管理（新增/停用/恢复/空间位置；ADMIN + 同事务审计）
+api_router.include_router(ward_editor.router)
 
 __all__ = ["api_router"]

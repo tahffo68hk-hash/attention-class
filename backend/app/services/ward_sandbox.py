@@ -24,8 +24,31 @@ from app.schemas.ward_sandbox import WardSandboxInput, WardSandboxOutput, Sandbo
 def preview_sandbox(db: Session, request: WardSandboxInput) -> WardSandboxOutput:
     # Queries are read-only; no ORM objects are mutated, even in a test transaction.
     beds = list(db.execute(select(Bed).options(joinedload(Bed.ward), joinedload(Bed.department))
-                           .order_by(Bed.code, Bed.id)).unique().scalars())
+                           .where(Bed.retired_at.is_(None)).order_by(Bed.code, Bed.id)).unique().scalars())
+    original_beds = list(beds)
     ids={b.id for b in beds}
+    by_id={b.id:b for b in beds}
+    # Production optimizer accepts only positive IDs. Virtual negative IDs are mapped
+    # to private positive solver IDs, then translated BACK before returning data.
+    # These IDs are never database primary keys and must never reach allocation APIs.
+    surrogate_to_virtual={}
+    surrogate=max(ids,default=0)+1
+    for new_bed in request.synthetic_beds:
+        template=by_id.get(new_bed.template_bed_id)
+        if template is None or template.ward_id!=new_bed.ward_id:
+            raise BizError(ErrorCode.VALIDATION_ERROR,'新增模拟床必须引用同病房的真实床模板',422)
+        if any(b.code.lower()==new_bed.code.lower() for b in original_beds):
+            raise BizError(ErrorCode.VALIDATION_ERROR,'模拟床号与真实床号冲突',422)
+        copy=SimpleNamespace(
+            id=surrogate,code=new_bed.code,status='AVAILABLE',department_id=template.department_id,
+            ward_id=template.ward_id,is_isolation=template.is_isolation,
+            gender_limit=template.gender_limit,bed_type=template.bed_type,
+            floor=template.floor,position_x=template.position_x,position_y=template.position_y,
+            daily_rate=template.daily_rate,ward=template.ward,department=template.department,
+        )
+        beds.append(copy)
+        surrogate_to_virtual[surrogate]=new_bed.virtual_id
+        surrogate+=1
     if any(i not in ids for i in request.unavailable_bed_ids):
         raise BizError(ErrorCode.VALIDATION_ERROR,'模拟禁用床位必须来自当前床位快照',422)
     dept_ids={r.department_id for r in request.synthetic_requests}
@@ -50,6 +73,8 @@ def preview_sandbox(db: Session, request: WardSandboxInput) -> WardSandboxOutput
     ) for b in beds}
     totals=Counter(b.ward_id for b in beds)
     frees=Counter(b.ward_id for b in beds if views[b.id].status=='AVAILABLE')
+    # Work with solver-safe positive IDs, but the API always exposes synthetic negative IDs.
+    public_id=lambda identifier:surrogate_to_virtual.get(identifier,identifier)
     edges=[];candidates=[]
     for patient in sorted(request.synthetic_requests,key=lambda r:r.scenario_id):
         dept=depts[patient.department_id]
@@ -73,7 +98,7 @@ def preview_sandbox(db: Session, request: WardSandboxInput) -> WardSandboxOutput
             }
             # Exact same rounding and weight rules as production recommend_beds.
             value=round(min(100,max(0,sum(round(v*score.WEIGHTS[k],4) for k,v in parts.items()))),2)
-            candidates.append(SandboxCandidate(scenario_id=patient.scenario_id,bed_id=bed.id,bed_code=bed.code,
+            candidates.append(SandboxCandidate(scenario_id=patient.scenario_id,bed_id=public_id(bed.id),bed_code=bed.code,
                   score=value,score_items={k:round(v,2) for k,v in parts.items()}))
             edges.append(EdgeCandidate(patient.scenario_id,bed.id,PRIORITY_RANK[patient.priority],value))
     if len(edges)>2000:
@@ -86,13 +111,14 @@ def preview_sandbox(db: Session, request: WardSandboxInput) -> WardSandboxOutput
     def serialize(solution):
         return SandboxSolution(method=solution.method,proven_optimal=solution.proven_optimal,
              admitted=solution.admitted,priority_sum=solution.priority_sum,score_sum=solution.score_sum,
-             runtime_ms=solution.runtime_ms,pairs=[SandboxPair(scenario_id=p.request_id,bed_id=p.bed_id,
+             runtime_ms=solution.runtime_ms,pairs=[SandboxPair(scenario_id=p.request_id,bed_id=public_id(p.bed_id),
                   score=p.score,priority_rank=p.priority_rank) for p in solution.pairs],
              unmatched_scenario_ids=list(solution.unmatched_request_ids))
     # Fingerprint of snapshot inputs, for comparison; API does not claim concurrency-free validity.
-    facts=[(b.id,b.code,str(b.status),b.ward_id,b.department_id,str(b.gender_limit),b.is_isolation,
+    facts=[(public_id(b.id),b.code,str(b.status),b.ward_id,b.department_id,str(b.gender_limit),b.is_isolation,
             str(b.bed_type),b.floor,b.position_x,b.position_y,str(b.daily_rate)) for b in beds]
     fingerprint=sha256(dumps(facts,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+    # Candidate edges use solver IDs and only the public return value uses virtual IDs.
     return WardSandboxOutput(snapshot_at=datetime.now(timezone.utc).isoformat(),snapshot_fingerprint=fingerprint,
           applied_unavailable_bed_ids=sorted(disabled),request_count=len(scenario_ids),candidate_count=len(edges),
           candidates=candidates,greedy=serialize(base),optimized=serialize(best))

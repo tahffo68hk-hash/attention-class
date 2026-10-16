@@ -1195,3 +1195,90 @@ html.theme-dark .wm-stage {
   line-height: 1.65;
   color: var(--muted);
 }
+
+/* 三维编辑工具行（选择 / 添加预览 / 拖动已选床）与操作提示 */
+.wm-editor-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wm-editor-tools .btn.is-active {
+  border-color: var(--primary);
+  color: var(--primary-strong);
+  background: var(--surface-2);
+}
+
+.wm-editor-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ================== 正式床位管理（Ward Bed Manager，写库 · 仅 ADMIN） ==================
+ * 与模拟编辑器同一套外观约定：结构类名走语义、颜色一律走全局令牌，按钮复用
+ * 全局 .btn 语义。交付版自带 `<style scoped>` 且写了硬编码的暗色覆盖，
+ * 在令牌主题下会与 .theme-dark 打架，故统一移到本文件。
+ * ========================================================================== */
+
+.wm-manager {
+  margin: 0 0 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  background: linear-gradient(150deg, var(--surface-2), var(--surface) 72%);
+  border-radius: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.wm-manager-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wm-manager-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.wm-manager-head strong {
+  font-size: 16px;
+  color: var(--color-text);
+}
+
+.wm-manager-head small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wm-manager-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.wm-manager-controls label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wm-manager-controls input,
+.wm-manager-controls select {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--color-text);
+  min-width: 110px;
+}
+
+.wm-manager-controls .wm-sandbox-note {
+  flex-basis: 100%;
+  margin: 0;
+}

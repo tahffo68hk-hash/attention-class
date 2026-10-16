@@ -61,6 +61,8 @@ def hard_constraint_violations(
 ) -> list[str]:
     """返回该床位对该住院证违反的硬约束描述；空列表表示通过。"""
     violations: list[str] = []
+    if getattr(bed,'retired_at',None) is not None:
+        violations.append('床位已正式停用，不得参与新的分配')
 
     if str(bed.status) != BedStatus.AVAILABLE.value:
         from app.models.enums import BED_STATUS_LABEL

@@ -20,6 +20,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import http from '@/api/http'
 import type { WardBed } from '@/modules/ward-map/types'
+import { supplyDelta, type EditorState } from '@/modules/ward-map/editor'
 import type {
   FictionalRequest,
   SandboxInput,
@@ -30,6 +31,10 @@ import type {
 const props = defineProps<{
   /** 完整业务快照的床位（沙盘候选来自真实床位，但假设只作用在服务端临时视图上） */
   beds: WardBed[]
+  /** 不可变的真实快照：用于计算「模拟供给增减」的基线 */
+  realBeds?: WardBed[]
+  /** 编辑器的当前草稿：仅用于把模拟增减折算成供给变化，绝不上送真实写入 */
+  editorState?: EditorState | null
   active: boolean
   /** 是否允许运行：真实业务快照 + 账号具备 ADMIN/NURSE 权限 */
   available: boolean
@@ -46,6 +51,29 @@ const departments = computed(() => [
 ])
 const wards = computed(() => [...new Map(props.beds.map((b) => [b.ward_id, b.ward_name])).entries()])
 const freeBeds = computed(() => props.beds.filter((b) => b.status === 'AVAILABLE'))
+
+/**
+ * 编辑器草稿带来的**供给变化**（相对不可变真实快照）：
+ * - added：模拟新增床（负数 virtual_id，借用同病房真实床位的**业务评分坐标**作为代理值）；
+ * - removed：被临时移除的真实空闲床（只进临时 unavailable 集合，不写库）。
+ */
+const delta = computed(() =>
+  props.editorState ? supplyDelta(props.editorState, props.realBeds ?? []) : { removed: [], added: [] },
+)
+/** 模拟新增床 → 服务端契约（virtual_id 为负数，绝不对应真实床位） */
+const virtualBeds = computed(() =>
+  delta.value.added.map((item) => {
+    const template = (props.realBeds ?? []).find((b) => b.ward_id === item.pose.wardId)
+    return template
+      ? {
+          virtual_id: item.bed.id,
+          template_bed_id: template.id,
+          code: item.bed.code,
+          ward_id: item.pose.wardId,
+        }
+      : null
+  }),
+)
 
 const patients = ref<FictionalRequest[]>([])
 const dept = ref<number>(0)
@@ -136,10 +164,14 @@ async function run() {
   busy.value = true
   stale.value = false
   try {
+    // 模拟新增床必须能找到同病房的真实床位模板，否则借用不到评分坐标 —— 宁可报错也不降级。
+    if (virtualBeds.value.some((b) => b === null))
+      throw new Error('模拟新增床缺少同病房真实床位模板，无法使用现有评分坐标')
     const payload: SandboxInput = {
       scenario_kind: 'SYNTHETIC_ONLY',
       synthetic_requests: patients.value.map((r) => ({ ...r })),
-      unavailable_bed_ids: [...disabledBeds.value],
+      synthetic_beds: virtualBeds.value.filter((b): b is NonNullable<typeof b> => b !== null),
+      unavailable_bed_ids: [...new Set([...disabledBeds.value, ...delta.value.removed])],
       ward_supply_cut:
         cutWard.value && cutCount.value > 0
           ? { ward_id: cutWard.value, count: cutCount.value }
@@ -188,6 +220,19 @@ watch(
 
 watch(selectedSolution, () => emit('result', plan.value, selectedSolution.value))
 
+// 编辑草稿一变，供给基线就变了：旧结论立即撤回，等用户重新计算（或下次参数变化触发）
+watch(
+  () => props.editorState,
+  () => {
+    if (plan.value) {
+      plan.value = null
+      stale.value = true
+      emit('result', null, selectedSolution.value)
+    }
+  },
+  { deep: true },
+)
+
 watch(actualBedsSignature, () => {
   if (plan.value && actualBedsSignature.value !== lastSignature.value) {
     stale.value = true
@@ -224,6 +269,12 @@ onBeforeUnmount(() => {
 
     <p class="wm-sandbox-notice">
       仅用于教学推演：红色为业务预占/入住；青色轮廓为候选；金色轮廓为模拟方案，不代表实际完成分配。
+    </p>
+
+    <p v-if="editorState" class="wm-sandbox-note">
+      编辑器供给变化：模拟新增 {{ delta.added.length }} 张，临时移除空闲床
+      {{ delta.removed.length }} 张。模拟新床的评分沿用同病房真实床位模板的业务评分坐标（代理值），
+      并非建筑 3D 展示坐标；这些都只在服务端临时视图里生效。
     </p>
 
     <div class="wm-sandbox-form">

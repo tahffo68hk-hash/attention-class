@@ -30,12 +30,21 @@ export const ROOM_WIDTH = 12.2
 /** 中央走廊宽度（展示单位）。 */
 export const CORRIDOR_WIDTH = 4.5
 
-/** 楼板外沿留边 / 病房模块间距 / 房内床位排布参数（均为模拟比例，不是米）。 */
+/** 楼板外沿留边 / 病房模块间距（均为模拟比例，不是米）。 */
 const EDGE = 1.05
 const ROOM_GAP = 0.35
-const BED_COLUMNS = 3
-const BED_PITCH_X = 3.08
-const BED_PITCH_Z = 3.4
+
+/**
+ * 房内床位网格参数。
+ * **导出**是因为三维编辑器的 Ghost 落点吸附必须和正式布局共用同一套口径 ——
+ * 各自镜像一份常量迟早会漂移。
+ */
+export const BED_COLUMNS = 3
+export const BED_PITCH_X = 3.08
+export const BED_PITCH_Z = 3.4
+/** 房内首个床位相对房间左下角的内缩量（X 朝内、Z 朝房内） */
+export const BED_INSET_X = 2.35
+export const BED_INSET_Z = 1.9
 
 export type RoomSide = 'north' | 'south'
 
@@ -136,10 +145,21 @@ export function createHospitalPlan(
     // 开间数取该楼任何一层的最大值，进深取该楼最深的病房，走廊轴线因此逐层对齐。
     const bays = Math.max(1, ...ordered.map(([, rs]) => Math.ceil(rs.length / 2)))
     const maxRows = Math.max(
-      1,
+      // 基础进深固定为 4 行（12 槽位）；超过 12 床的历史病房按实际容量维持既有规模。
+      4,
       ...rooms
         .filter((r) => r.building === name)
-        .map((r) => Math.ceil((byRoom.get(r.ward_id)?.length || 0) / BED_COLUMNS)),
+        .map((r) => {
+          const items = byRoom.get(r.ward_id) || []
+          // 槽位决定病房实际需要的行数：草稿姿态优先，其次持久化 scene_slot。
+          const lastSlot = Math.max(
+            items.length - 1,
+            ...items.map((b) =>
+              poses[b.id]?.wardId === r.ward_id ? poses[b.id]!.slot : (b.scene_slot ?? -1),
+            ),
+          )
+          return Math.ceil((lastSlot + 1) / BED_COLUMNS)
+        }),
     )
     const roomDepth = Math.max(9.6, maxRows * BED_PITCH_Z + 3.0)
     const width = EDGE * 2 + bays * (ROOM_WIDTH + ROOM_GAP) - ROOM_GAP
@@ -164,19 +184,36 @@ export function createHospitalPlan(
         const items = [...(byRoom.get(room.ward_id) || [])].sort(
           (a, b) => compare(a.code, b.code) || a.id - b.id,
         )
-        items.forEach((bed, j) => {
+        // 真实床与草稿床**统一占用槽位**：先把所有「显式」槽位（草稿姿态优先，
+        // 其次持久化 scene_slot）收进占用集合，无显式槽位的床再按床号顺序补空位 ——
+        // 这样新增/移动一张床不会把已有床位挤到别的格子里。
+        const occupied = new Set<number>()
+        for (const bed of items) {
+          const pose = poses[bed.id]
+          const n = pose && pose.wardId === room.ward_id ? pose.slot : bed.scene_slot
+          if (n !== null && n !== undefined && Number.isInteger(n) && n >= 0) occupied.add(n)
+        }
+        let fallback = 0
+        items.forEach((bed) => {
           // 编辑草稿的槽位姿态优先于「按床号顺排」的默认落位：槽位是屏幕网格吸附
           // 位置，不是医疗评分坐标；同样，旋转增量只是叠加在「床头朝外侧墙」的基准角上。
           const pose = poses[bed.id]
-          const slot = pose && pose.wardId === room.ward_id ? pose.slot : j
+          const explicit =
+            pose && pose.wardId === room.ward_id ? pose.slot : (bed.scene_slot ?? undefined)
+          while (occupied.has(fallback)) fallback++
+          const slot = explicit ?? fallback++
+          occupied.add(slot)
           const col = slot % BED_COLUMNS
           const row = Math.floor(slot / BED_COLUMNS)
-          const bedX = x + 2.35 + col * BED_PITCH_X
+          const bedX = x + BED_INSET_X + col * BED_PITCH_X
           // 北侧病房的床头朝外侧（-Z）墙；南侧整房旋转 π，床头同样朝外侧墙。
           const bedZ =
-            side === 'north' ? z + 1.9 + row * BED_PITCH_Z : z + roomDepth - 1.9 - row * BED_PITCH_Z
+            side === 'north'
+              ? z + BED_INSET_Z + row * BED_PITCH_Z
+              : z + roomDepth - BED_INSET_Z - row * BED_PITCH_Z
           const orientation =
-            (side === 'north' ? 0 : Math.PI) + ((pose?.rotation || 0) * Math.PI) / 180
+            (side === 'north' ? 0 : Math.PI) +
+            ((pose?.rotation ?? bed.scene_rotation ?? 0) * Math.PI) / 180
           sceneBeds.push({ bed, x: bedX, z: bedZ, floorKey: key, orientation })
           bedFloors[bed.id] = key
           // 轻微 Z 错层，避免上下层床位在正交视角下完全重叠

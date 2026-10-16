@@ -157,8 +157,11 @@ for (const rel of boundaryFiles) {
 }
 
 const editorSrc = fs.readFileSync(path.join(__dirname, 'src/modules/ward-map/editor.ts'), 'utf8')
-// 合成床位 id 必须是负数：`id:-1-Math.max(0,...)`
-ok(/id:\s*-1-/.test(editorSrc), '合成床位 id 必须为负数（-1-Math.max(...)）')
+// 合成床位 id 必须是负数 —— 用**运行时**断言（不绑死具体写法）：
+// V2 用 `-1-Math.max(...)`，V2 Next 改用 `Math.min(0,...)-1`，两者等价，
+// 真正要守的不变量是「草稿床 id 恒 < 0，永不与真实床位 id 空间冲突」。
+const syntheticIds = state.items.filter((i) => i.synthetic).map((i) => i.bed.id)
+ok(syntheticIds.length > 0 && syntheticIds.every((id) => id < 0), '合成床位 id 必须为负数（不与真实床位冲突）')
 // 草稿必须有上限，避免历史栈无限增长
 ok(/history\.slice\(-49\)/.test(editorSrc), '历史栈应裁剪到 50 步以内')
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -12,6 +13,8 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    DateTime,
+    UniqueConstraint,
     Numeric,
     String,
 )
@@ -111,7 +114,10 @@ class Bed(Base, TimestampMixin):
         Numeric(10, 2), nullable=False, default=Decimal("0.00"), comment="日费用（元）"
     )
     note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    retired_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    scene_slot: Mapped["BedSceneSlot | None"] = relationship(back_populates="bed",uselist=False)
     ward: Mapped["Ward"] = relationship(back_populates="beds")
     department: Mapped["Department"] = relationship(back_populates="beds")
 
@@ -126,3 +132,17 @@ class Bed(Base, TimestampMixin):
         Index("ix_beds_ward_status", "ward_id", "status"),
         {"comment": "床位表"},
     )
+
+
+class BedSceneSlot(Base):
+    """Stable display-only slot. Separate from scoring coordinates in Bed."""
+    __tablename__ = 'bed_scene_slots'
+    id: Mapped[int] = mapped_column(primary_key=True,autoincrement=True)
+    bed_id: Mapped[int] = mapped_column(ForeignKey('beds.id',ondelete='RESTRICT'),nullable=False,unique=True)
+    ward_id: Mapped[int] = mapped_column(ForeignKey('wards.id',ondelete='RESTRICT'),nullable=False)
+    slot: Mapped[int] = mapped_column(Integer,nullable=False)
+    rotation: Mapped[int] = mapped_column(Integer,nullable=False,default=0)
+    bed: Mapped[Bed] = relationship(back_populates='scene_slot')
+    __table_args__=(CheckConstraint('slot >= 0',name='ck_bed_scene_slot_nonnegative'),
+                    CheckConstraint('rotation IN (0,90,180,270)',name='ck_bed_scene_rotation'),
+                    UniqueConstraint('ward_id','slot',name='uq_bed_scene_ward_slot'))
