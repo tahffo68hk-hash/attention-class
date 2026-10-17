@@ -27,6 +27,10 @@ function loadTs(name) {
   const m = new Module(name, module)
   m.filename = name
   m.paths = module.paths
+  // scene-layout 现在会以运行时方式依赖 slot-grid.ts（同源槽位几何）：
+  // Node 本身不解析 `.ts` 扩展，这里补上相对模块的转译加载（与其它守卫一致）。
+  m.require = (specifier) =>
+    specifier.startsWith('./') ? loadTs(`${specifier.slice(2)}.ts`) : require(specifier)
   m._compile(outputText, name)
   return m.exports
 }

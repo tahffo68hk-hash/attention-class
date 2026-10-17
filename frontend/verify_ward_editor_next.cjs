@@ -37,7 +37,9 @@ moved=E.removeDraft(moved,added.key);okay(E.supplyDelta(moved,real).added.length
 moved=E.removeDraft(moved,'bed:11');okay(E.supplyDelta(moved,real).removed.includes(11),'simulated removal from available real supply');
 okay(E.roomSlots(rooms[0],12)===12,'room capacity stable at 12');
 const scene=fs.readFileSync(path.join(__dirname,'src/components/WardScene3D.vue'),'utf8');
-for(const clause of ['edit-place','pointerup','ensureGhost','raycaster.ray.intersectPlane','ghostMaterial.color.set',"props.editorOccupied?.some"]){okay(scene.includes(clause),`interactive scene contains ${clause}`)}
+// 场景侧的落点链路在 Slot Sandbox V2 改为「真实地面槽位瓦片射线」，旧的
+// `raycaster.ray.intersectPlane`（平面反推槽位）已被移除，断言随之换成语义等价的锚点。
+for(const clause of ['edit-place','pointerup','ensureGhost','intersectObjects(slotTargets','ghostMaterial.color.set',"props.editorOccupied?.find"]){okay(scene.includes(clause),`interactive scene contains ${clause}`)}
 for(const file of ['WardScene3D.vue','WardBedEditor.vue','WardBedManager.vue']){
  const src=fs.readFileSync(path.join(__dirname,'src/components',file),'utf8');
  const script=src.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1];

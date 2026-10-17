@@ -20,6 +20,9 @@
  */
 
 import type { WardBed, WardRoom } from './types'
+// 槽位网格的**唯一**几何来源：床位落位、地面槽位瓦片、Ghost 预览共用同一份实现。
+// 各自镜像一份常量迟早会漂移，因此这里只做转发与复用。
+import { SLOT_COLUMNS, SLOT_Z_STEP, slotCenter } from './slot-grid'
 
 /** 层高（展示单位）。真实建筑层高约 3~4m，这里为剖面可读性放大。 */
 export const FLOOR_HEIGHT = 4.9
@@ -36,15 +39,11 @@ const ROOM_GAP = 0.35
 
 /**
  * 房内床位网格参数。
- * **导出**是因为三维编辑器的 Ghost 落点吸附必须和正式布局共用同一套口径 ——
- * 各自镜像一份常量迟早会漂移。
+ * **导出**是因为三维编辑器的槽位/落点必须和正式布局共用同一套口径 ——
+ * 数值本身由 `slot-grid.ts` 提供，这里仅保留既有导出名，避免破坏既有引用。
  */
-export const BED_COLUMNS = 3
-export const BED_PITCH_X = 3.08
-export const BED_PITCH_Z = 3.4
-/** 房内首个床位相对房间左下角的内缩量（X 朝内、Z 朝房内） */
-export const BED_INSET_X = 2.35
-export const BED_INSET_Z = 1.9
+export const BED_COLUMNS = SLOT_COLUMNS
+export const BED_PITCH_Z = SLOT_Z_STEP
 
 export type RoomSide = 'north' | 'south'
 
@@ -203,14 +202,12 @@ export function createHospitalPlan(
           while (occupied.has(fallback)) fallback++
           const slot = explicit ?? fallback++
           occupied.add(slot)
-          const col = slot % BED_COLUMNS
-          const row = Math.floor(slot / BED_COLUMNS)
-          const bedX = x + BED_INSET_X + col * BED_PITCH_X
-          // 北侧病房的床头朝外侧（-Z）墙；南侧整房旋转 π，床头同样朝外侧墙。
-          const bedZ =
-            side === 'north'
-              ? z + BED_INSET_Z + row * BED_PITCH_Z
-              : z + roomDepth - BED_INSET_Z - row * BED_PITCH_Z
+          // 床位、地面槽位与 Ghost 共用**同一条**落位规则（slot-grid.slotCenter），
+          // 这样「看到的槽位」和「床实际落的位置」不可能对不上。
+          const { x: bedX, z: bedZ } = slotCenter(
+            { room, x, z, width: ROOM_WIDTH, depth: roomDepth, side },
+            slot,
+          )
           const orientation =
             (side === 'north' ? 0 : Math.PI) +
             ((pose?.rotation ?? bed.scene_rotation ?? 0) * Math.PI) / 180

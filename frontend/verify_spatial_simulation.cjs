@@ -4,7 +4,10 @@ const ts=require('typescript');
 function load(name){const source=fs.readFileSync(path.join(__dirname,'src/modules/ward-map',name),'utf8');
  const out=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},reportDiagnostics:true});
  assert(!(out.diagnostics||[]).some(d=>d.category===ts.DiagnosticCategory.Error),`${name} TS parse`);
- const m=new Module(name,module);m.filename=name;m.paths=module.paths;m._compile(out.outputText,name);return m.exports}
+ const m=new Module(name,module);m.filename=name;m.paths=module.paths;
+ // scene-layout 现在运行时依赖 slot-grid.ts：Node 不解析 `.ts`，补相对模块的转译加载。
+ m.require=s=>s.startsWith('./')?load(`${s.slice(2)}.ts`):require(s);
+ m._compile(out.outputText,name);return m.exports}
 const {demoSnapshot}=load('demo.ts'),{createHospitalPlan,FLOOR_HEIGHT}=load('scene-layout.ts');
 const data=demoSnapshot(),plan=createHospitalPlan(data.rooms,data.beds);
 assert.equal(data.beds.length,44);assert.equal(plan.bedLocations&&Object.keys(plan.bedLocations).length,44);

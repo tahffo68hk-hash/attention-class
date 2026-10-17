@@ -33,17 +33,13 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 
 import {
-  BED_COLUMNS,
-  BED_INSET_X,
-  BED_INSET_Z,
-  BED_PITCH_X,
-  BED_PITCH_Z,
   FLOOR_HEIGHT,
   createHospitalPlan,
   type HospitalPlan,
   type SceneFloor,
-  type SceneRoom,
 } from '@/modules/ward-map/scene-layout'
+// 槽位几何与正式布局同源：床、地面瓦片、Ghost 三者不各算一套。
+import { floorSlotCount, slotCenter } from '@/modules/ward-map/slot-grid'
 import {
   HOVER_LIFT,
   easedApproach,
@@ -54,7 +50,6 @@ import {
 } from '@/modules/ward-map/hover-visual'
 import { isConfirmedOccupant, statusMeta } from '@/modules/ward-map/types'
 import type { SceneMode, WardBed, WardRoom } from '@/modules/ward-map/types'
-import { roomSlots } from '@/modules/ward-map/editor'
 
 const props = defineProps<{
   /** **完整快照**的床位：过滤只隐藏网格，不重排几何（避免筛选时建筑跳变） */
@@ -69,8 +64,8 @@ const props = defineProps<{
   dark?: boolean
   /** 模拟编辑器是否接管交互：点击改为「选中编辑对象」而非「打开真实床位详情」 */
   editorMode?: boolean
-  /** 当前编辑工具：选择 / 预览添加 / 拖动已选床 */
-  editTool?: 'select' | 'add' | 'move'
+  /** 当前编辑工具：选择 / 放置 / 移动 / 移除（后三者由地面槽位接管点击） */
+  editTool?: 'select' | 'add' | 'move' | 'remove'
   /** 当前编辑目标病房（Ghost 只在该病房内吸附） */
   editRoomId?: number
   /** 当前编辑朝向（Ghost 的旋转增量） */
@@ -100,8 +95,10 @@ const emit = defineEmits<{
   (e: 'unavailable'): void
   /** 编辑态下点击床位：交给编辑器处理，绝不触发真实床位管理 */
   (e: 'edit-select', bed: WardBed): void
-  /** 编辑器落点提交（拖放或点击确认）：由面板执行真正的草稿变更 */
+  /** 编辑器落点提交（点击地面槽位）：由面板执行真正的草稿变更 */
   (e: 'edit-place', pose: { wardId: number; slot: number; rotation: 0 | 90 | 180 | 270 }, bedId: number | null): void
+  /** 画布右键 / Esc 取消当前编辑工具（只取消工具，不动草稿） */
+  (e: 'edit-cancel'): void
 }>()
 
 const viewport = ref<HTMLDivElement | null>(null)
@@ -182,15 +179,18 @@ let sceneTween = 0
 let hoveredId: number | null = null
 let pointerDown: { x: number; y: number; bedId: number | null } | null = null
 /**
- * 编辑器落点预览（Ghost）：半透明床位吸附到病房网格槽位，绿=合法 / 红=不可放置。
- * Ghost **绝不进入 `pickTargets`**，因此不会和正常床位抢占 Raycaster。
+ * 编辑器落点预览（Ghost）：半透明床位吸附到**地面槽位**，绿=合法 / 红=不可放置。
+ * Ghost **绝不进入 `pickTargets`/`slotTargets`**，因此不会和正常床位抢 Raycaster。
  */
-let placement: { wardId: number; slot: number; rotation: 0 | 90 | 180 | 270; valid: boolean } | null =
-  null
 let ghost: THREE.Group | null = null
 let ghostMaterial: THREE.MeshBasicMaterial | null = null
-const placePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-const placePoint = new THREE.Vector3()
+/**
+ * 地面槽位瓦片是**真实的射线命中对象**（不是「按最近点反推槽位」）。
+ * 因此点在哪里、命中哪个槽位是确定的，和相机角度、楼层补间无关。
+ */
+const slotTargets: THREE.Mesh[] = []
+let hoveredSlot: THREE.Mesh | null = null
+let slotMaterials: Record<string, THREE.MeshBasicMaterial> | null = null
 let initialized = false
 /** 切到后台时是否打断了一段未完的相机/楼层过渡，用于回前台补齐 */
 let resumeTransitionAfterVisibility = false
@@ -489,6 +489,209 @@ function buildBed(
   })
 }
 
+/* ------------------------------ 地面槽位瓦片 ------------------------------ */
+
+/**
+ * 槽位编号专用贴图/材质缓存。
+ *
+ * 为什么不用 `textLabel`：那个函数为病房牌/楼层牌设计，画布是 768×176 而文字只占
+ * 很小一段，缩到 2.5 单位宽的槽位上只有两三个像素 —— 等于看不见。
+ * 这里用**紧贴文字**的画布，并按文本缓存（`S01` 在每间病房都一样），
+ * 否则 3 层 × 36 房 × 12 槽会产生四百多张重复贴图。
+ */
+const slotLabelMaterials = new Map<string, THREE.MeshBasicMaterial>()
+const slotLabelGeometry = new THREE.PlaneGeometry(2.2, 0.9)
+sharedGeometries.add(slotLabelGeometry)
+
+function slotLabelMaterial(text: string): THREE.MeshBasicMaterial | null {
+  const cached = slotLabelMaterials.get(text)
+  if (cached) return cached
+  const canvas = document.createElement('canvas')
+  canvas.width = 192
+  canvas.height = 96
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = '#14536b'
+  ctx.font = '700 76px "Microsoft YaHei",sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
+  temporaryTextures.push(tex)
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+  temporaryMaterials.push(mat)
+  slotLabelMaterials.set(text, mat)
+  return mat
+}
+
+/**
+ * 绘制**固定**地面槽位：数量只由病房进深决定，与当前摆了几张床无关。
+ * 三种占用态用颜色区分（空槽 / 正式床 / 模拟床），编号「S01、S02…」直接贴在地面上，
+ * 而不是浮在空中的 UI 标签 —— 它必须和真正被射线命中的那块瓦片是同一个东西。
+ */
+function buildFloorSlots(f: SceneFloor, layer: THREE.Group) {
+  if (!slotMaterials) {
+    slotMaterials = {
+      empty: new THREE.MeshBasicMaterial({
+        color: '#54C7BD',
+        transparent: true,
+        opacity: 0.2,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+      real: new THREE.MeshBasicMaterial({
+        color: '#75899D',
+        transparent: true,
+        opacity: 0.13,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+      draft: new THREE.MeshBasicMaterial({
+        color: '#1EB8BF',
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+      hover: new THREE.MeshBasicMaterial({
+        color: '#E7C05F',
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    }
+    temporaryMaterials.push(...Object.values(slotMaterials))
+  }
+  for (const room of f.rooms) {
+    // 占用表：编辑草稿姿态优先，其次持久化 scene_slot；两者都没有的床不算占用。
+    const occupants = new Map<number, number>()
+    for (const bed of f.beds.filter((b) => b.bed.ward_id === room.room.ward_id)) {
+      const pose = props.editorPoses?.[bed.bed.id]
+      const saved = pose?.wardId === room.room.ward_id ? pose.slot : bed.bed.scene_slot
+      if (saved !== null && saved !== undefined) occupants.set(saved, bed.bed.id)
+    }
+    for (let i = 0; i < floorSlotCount(room); i++) {
+      const center = slotCenter(room, i)
+      const bedId = occupants.get(i) ?? null
+      // 合成床位 id 恒为负数：这是区分「模拟床」与「正式床」的唯一可靠信号。
+      const kind = bedId === null ? 'empty' : bedId < 0 ? 'draft' : 'real'
+      const tile = cube(layer, slotMaterials[kind], center.x, 0.087, center.z, 2.55, 0.025, 2.8)
+      tile.userData = { wardId: room.room.ward_id, slot: i, bedId, floorKey: f.key, kind }
+      tile.visible = !!props.editorMode
+      tile.renderOrder = 2
+      slotTargets.push(tile)
+      // 编号嵌在地面上（不是漂浮 UI 标签），位置贴着地块前端，空槽一眼可读。
+      const label = new THREE.Group()
+      label.position.set(center.x, 0, center.z + 0.96)
+      layer.add(label)
+      const labelMat = slotLabelMaterial(`S${String(i + 1).padStart(2, '0')}`)
+      if (labelMat) {
+        const plate = new THREE.Mesh(slotLabelGeometry, labelMat)
+        plate.position.y = 0.115
+        plate.rotation.x = -Math.PI / 2
+        plate.renderOrder = 3
+        label.add(plate)
+      }
+      label.visible = !!props.editorMode
+      tile.userData.label = label
+    }
+  }
+}
+
+/** 槽位只在编辑态、且所在楼层当前可见时才显示（聚焦模式下不显示其它楼层）。 */
+function updateSlotVisibility() {
+  for (const tile of slotTargets) {
+    const enabled =
+      !!props.editorMode &&
+      (props.viewMode !== 'focus' || tile.userData.floorKey === props.focusFloor)
+    tile.visible = enabled
+    ;(tile.userData.label as THREE.Group).visible = enabled
+  }
+  if (!props.editorMode) restoreSlotHover()
+}
+
+/** 把悬停槽位的材质还原回它自己的占用态配色。 */
+function restoreSlotHover() {
+  if (hoveredSlot && slotMaterials) {
+    hoveredSlot.material = slotMaterials[hoveredSlot.userData.kind as string]
+    hoveredSlot = null
+  }
+}
+
+/** 命中真实的地面瓦片；无编辑态或没打中时返回 null。 */
+function pickSlot(e: { clientX: number; clientY: number }): THREE.Mesh | null {
+  if (!props.editorMode || !camera || !renderer) return null
+  const rect = renderer.domElement.getBoundingClientRect()
+  pointer.set(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1,
+  )
+  // 楼层补间期间矩阵可能仍是上一帧：先同步，再求交。
+  camera.updateMatrixWorld()
+  root?.updateWorldMatrix(true, true)
+  raycaster.setFromCamera(pointer, camera)
+  const hits = raycaster.intersectObjects(slotTargets, false)
+  for (const hit of hits) {
+    const target = hit.object as THREE.Mesh
+    if (target.visible && isVisibleObject(target)) return target
+  }
+  return null
+}
+
+/**
+ * 悬停槽位 → 高亮该瓦片并给出 Ghost 预览。
+ *
+ * 合法性在这里只做「槽位占用」的粗判；**真正的**校验（正式床/模拟床区分、
+ * 移动源、容量）由编辑器面板再判一次，场景不代替它下结论。
+ */
+function previewFloorSlot(tile: THREE.Mesh | null) {
+  if (hoveredSlot !== tile) {
+    restoreSlotHover()
+    hoveredSlot = tile
+    if (tile && slotMaterials) tile.material = slotMaterials.hover
+  }
+  if (!tile || props.editTool === 'remove' || props.editTool === 'select') {
+    hideGhost()
+    render()
+    return
+  }
+  const { wardId, slot } = tile.userData as { wardId: number; slot: number }
+  const current = props.editTool === 'move' ? (pointerDown?.bedId ?? props.selectedId) : null
+  const occupant = props.editorOccupied?.find((p) => p.wardId === wardId && p.slot === slot)
+  const valid = !occupant || (props.editTool === 'move' && occupant.bedId === current)
+  const room = plan?.floors.flatMap((f) => f.rooms).find((r) => r.room.ward_id === wardId)
+  const floor = plan?.floors.find((f) => f.rooms.some((r) => r.room.ward_id === wardId))
+  const layer = floor ? floors.get(floor.key) : undefined
+  if (!room || !layer) {
+    hideGhost()
+    return
+  }
+  ensureGhost()
+  if (!ghost || !ghostMaterial) return
+  if (ghost.parent !== layer) {
+    ghost.parent?.remove(ghost)
+    layer.add(ghost)
+  }
+  const center = slotCenter(room, slot)
+  ghost.position.set(center.x, 0, center.z)
+  ghost.rotation.y = (room.side === 'north' ? 0 : Math.PI) + ((props.editRotation ?? 0) * Math.PI) / 180
+  ghostMaterial.color.set(valid ? '#32B38C' : '#E35A60')
+  ghost.visible = true
+  updateOcclusionTargets()
+  // 遮挡淡化依赖效果帧推进（Hover V3 语义）：Ghost 移动也算「目标变化」。
+  startEffects()
+  render()
+}
+
 /* -------------------------------- 楼层 -------------------------------- */
 
 function buildFloor(f: SceneFloor) {
@@ -557,6 +760,8 @@ function buildFloor(f: SceneFloor) {
   }
 
   for (const item of f.beds) buildBed(layer, item.bed, item.x, item.z, f.key, item.orientation)
+  // 地面槽位在床位之后绘制：瓦片落在床体下方，遮不住床，但空槽一眼可见。
+  buildFloorSlots(f, layer)
 
   // 楼层侧标（悬浮在楼板外侧，不占室内空间）
   const side = new THREE.Group()
@@ -619,7 +824,6 @@ function buildHospitalShell() {
 
 function hideGhost() {
   if (ghost) ghost.visible = false
-  placement = null
 }
 
 /**
@@ -640,96 +844,6 @@ function ensureGhost() {
   temporaryMaterials.push(ghostMaterial)
   cube(ghost, ghostMaterial, 0, 0.45, 0, 1.4, 0.35, 2.45)
   cube(ghost, ghostMaterial, 0, 0.75, -1.08, 1.4, 0.35, 0.12)
-}
-
-/**
- * 相机射线与「当前楼层平面」求交 → 换算成病房网格槽位 → 给出落点与合法性。
- *
- * 平面高度跟着**动画中的楼层**走（不假设建筑高度固定）；求交失败、落在房外或
- * 槽位冲突时一律隐藏 Ghost —— 宁可不提示，也不给错误的绿色提示。
- * 网格参数直接取自 `scene-layout.ts`，与正式布局共用同一口径。
- */
-function previewPlacement(e: PointerEvent): void {
-  if (!props.editorMode || !camera || !renderer || !plan || !root || props.editTool === 'select') {
-    hideGhost()
-    return
-  }
-  const roomId = props.editRoomId
-  const target = plan.floors.find((floor) => floor.rooms.some((r) => r.room.ward_id === roomId))
-  const room: SceneRoom | undefined = target?.rooms.find((r) => r.room.ward_id === roomId)
-  const layer = target ? floors.get(target.key) : null
-  if (!target || !room || !layer || !isVisibleObject(layer)) {
-    hideGhost()
-    return
-  }
-  // 楼层补间期间渲染矩阵可能仍是上一帧：先同步世界矩阵，再按当帧画布矩形换算 NDC。
-  root.updateWorldMatrix(true, true)
-  camera.updateMatrixWorld()
-  const rect = renderer.domElement.getBoundingClientRect()
-  pointer.set(
-    ((e.clientX - rect.left) / rect.width) * 2 - 1,
-    -((e.clientY - rect.top) / rect.height) * 2 + 1,
-  )
-  raycaster.setFromCamera(pointer, camera)
-  placePlane.constant = -layer.getWorldPosition(new THREE.Vector3()).y
-  if (!raycaster.ray.intersectPlane(placePlane, placePoint)) {
-    hideGhost()
-    return
-  }
-  const local = layer.worldToLocal(placePoint.clone())
-  const col = Math.round((local.x - room.x - BED_INSET_X) / BED_PITCH_X)
-  const row = Math.round(
-    (room.side === 'north'
-      ? local.z - room.z - BED_INSET_Z
-      : room.z + room.depth - BED_INSET_Z - local.z) / BED_PITCH_Z,
-  )
-  const slot = row * BED_COLUMNS + col
-  // 与编辑面板**共用同一个容量口径**：否则 Ghost 显示绿色、面板却判「超出合法槽位」。
-  const capacity = roomSlots(
-    room.room,
-    target.beds.filter((b) => b.bed.ward_id === roomId).length,
-  )
-  if (
-    col < 0 ||
-    col >= BED_COLUMNS ||
-    row < 0 ||
-    slot >= capacity ||
-    local.x < room.x ||
-    local.x > room.x + room.width ||
-    local.z < room.z ||
-    local.z > room.z + room.depth
-  ) {
-    hideGhost()
-    return
-  }
-  // 拖动自身时不算冲突，否则「原地放下」会被判非法。
-  const currentId = props.editTool === 'move' ? (pointerDown?.bedId ?? props.selectedId) : null
-  const conflict =
-    props.editorOccupied?.some(
-      (p) => p.wardId === roomId && p.slot === slot && p.bedId !== currentId,
-    ) ?? false
-  const valid = !conflict
-  ensureGhost()
-  if (!ghost || !ghostMaterial) return
-  if (ghost.parent !== layer) {
-    ghost.parent?.remove(ghost)
-    layer.add(ghost)
-  }
-  ghost.position.set(
-    room.x + BED_INSET_X + col * BED_PITCH_X,
-    0,
-    room.side === 'north'
-      ? room.z + BED_INSET_Z + row * BED_PITCH_Z
-      : room.z + room.depth - BED_INSET_Z - row * BED_PITCH_Z,
-  )
-  ghost.rotation.y =
-    (room.side === 'north' ? 0 : Math.PI) + ((props.editRotation ?? 0) * Math.PI) / 180
-  ghostMaterial.color.set(valid ? '#32B38C' : '#E35A60')
-  ghost.visible = true
-  placement = { wardId: roomId ?? 0, slot, rotation: props.editRotation ?? 0, valid }
-  updateOcclusionTargets()
-  startEffects()
-  render()
 }
 
 /* ------------------------------ 场景生命周期 ------------------------------ */
@@ -1011,9 +1125,14 @@ function clearScene() {
   temporaryMaterials.splice(0).forEach((m) => m.dispose())
   // Ghost 用的是上面已 dispose 的临时材质，引用必须一并清空，
   // 否则下一次重建会拿到已释放的材质对象。
+  // 槽位瓦片与槽位材质同属临时资源，顺序：先还原悬停材质引用，再断开列表。
+  restoreSlotHover()
+  slotTargets.length = 0
+  slotMaterials = null
+  // 标签贴图/材质已随 temporary* 一起释放，这里只需断开缓存引用
+  slotLabelMaterials.clear()
   ghost = null
   ghostMaterial = null
-  placement = null
   pointerDown = null
   root = undefined
   pickTargets.length = 0
@@ -1033,6 +1152,8 @@ function rebuild() {
   for (const f of plan.floors) buildFloor(f)
   buildHospitalShell()
   updateVisibility()
+  // 槽位瓦片按「编辑态 + 当前观察模式」决定显隐；重建后必须重算一次。
+  updateSlotVisibility()
   updateHighlights()
   applyMode(false)
   markShadowsDirty()
@@ -1229,8 +1350,9 @@ function pick(e: PointerEvent | MouseEvent): WardBed | null {
 }
 
 function pointerMove(e: PointerEvent) {
-  // 编辑工具下先刷新 Ghost 预览，再做常规拾取（Ghost 不参与拾取，互不干扰）
-  if (props.editorMode && props.editTool !== 'select') previewPlacement(e)
+  // 编辑态下由「地面槽位瓦片」驱动 Ghost 预览；非编辑态负责清掉上次的槽位高亮。
+  if (props.editorMode) previewFloorSlot(pickSlot(e))
+  else restoreSlotHover()
   const bed = pick(e)
   const next = bed?.id ?? null
   if (next !== hoveredId) {
@@ -1245,6 +1367,7 @@ function pointerMove(e: PointerEvent) {
 }
 
 function pointerLeave() {
+  restoreSlotHover()
   hideGhost()
   hoveredId = null
   updateOcclusionTargets()
@@ -1261,25 +1384,40 @@ function pointerStart(e: PointerEvent) {
 }
 
 /**
- * 编辑落点提交：只有 Ghost 判定为合法、且确实发生了「拖动」或「点击」才落子。
- * 副作用一律交给上层面板执行，场景本身不改草稿状态。
+ * 编辑落点提交：命中地面槽位就上报，**合法性由编辑器面板再判一次**
+ * （正式床/模拟床区分、移动源、容量）。场景不替面板下结论，也不改草稿状态。
  */
 function pointerEnd(e: PointerEvent) {
   if (!pointerDown || !props.editorMode || props.editTool === 'select') return
-  const targetId = pointerDown.bedId
-  const moved = Math.hypot(e.clientX - pointerDown.x, e.clientY - pointerDown.y) > 5
-  previewPlacement(e)
-  if (
-    placement?.valid &&
-    (props.editTool === 'add' || (props.editTool === 'move' && targetId !== null && moved))
-  ) {
-    emit(
-      'edit-place',
-      { wardId: placement.wardId, slot: placement.slot, rotation: placement.rotation },
-      props.editTool === 'move' ? targetId : null,
-    )
+  const tile = pickSlot(e)
+  const sourceId = pointerDown.bedId ?? props.selectedId
+  if (tile) {
+    const tileBedId = tile.userData.bedId as number | null
+    // 移动工具下点「源床自己占的槽位」只是选中，不是落子：
+    // 否则会以同槽位提交一次空移动，面板随之刷新草稿并把 selectedId 清空，
+    // 紧接着的第二次点击就找不到移动源了。
+    const selectingOnly = props.editTool === 'move' && tileBedId !== null && tileBedId === sourceId
+    const pose = {
+      wardId: Number(tile.userData.wardId),
+      slot: Number(tile.userData.slot),
+      rotation: props.editRotation ?? 0,
+    }
+    // 移动工具必须先有源床位，否则「无源移动」会被面板判成新增。
+    if (!selectingOnly && (props.editTool !== 'move' || sourceId !== null)) {
+      emit('edit-place', pose, props.editTool === 'move' ? sourceId : null)
+    }
   }
   pointerDown = null
+}
+
+/** 画布右键取消当前工具：与 Esc 等价，避免「工具卡住只能刷页面」。 */
+function onEditContextMenu(e: MouseEvent) {
+  if (!props.editorMode) return
+  e.preventDefault()
+  restoreSlotHover()
+  hideGhost()
+  emit('edit-cancel')
+  render()
 }
 
 function click(e: MouseEvent) {
@@ -1372,6 +1510,7 @@ function initialize() {
     renderer.domElement.addEventListener('pointerleave', pointerLeave)
     renderer.domElement.addEventListener('pointerdown', pointerStart)
     renderer.domElement.addEventListener('pointerup', pointerEnd)
+    renderer.domElement.addEventListener('contextmenu', onEditContextMenu)
     renderer.domElement.addEventListener('click', click)
     observer = new ResizeObserver(resize)
     observer.observe(viewport.value)
@@ -1428,6 +1567,7 @@ function destroy() {
     renderer.domElement.removeEventListener('pointerleave', pointerLeave)
     renderer.domElement.removeEventListener('pointerdown', pointerStart)
     renderer.domElement.removeEventListener('pointerup', pointerEnd)
+    renderer.domElement.removeEventListener('contextmenu', onEditContextMenu)
     renderer.domElement.removeEventListener('click', click)
   }
   controls?.removeEventListener('change', onCameraChange)
@@ -1471,6 +1611,8 @@ watch(
     // 留着旧悬停会短暂点亮一张已经不在画面里的床。
     if (initialized) {
       pointerLeave()
+      // 聚焦/展开会改变楼层可见性，槽位瓦片必须跟着重新判定，否则会在隐藏楼层继续命中。
+      updateSlotVisibility()
       applyMode()
     }
   },
@@ -1503,6 +1645,7 @@ watch(
   () => [props.cutaway, props.editorMode, props.editTool, props.editRoomId],
   () => {
     // 工具或病房一变，旧 Ghost 的槽位就失效了：先隐藏，再同步 OrbitControls 的可用性
+    updateSlotVisibility()
     hideGhost()
     if (controls) controls.enabled = !(props.editorMode && props.editTool !== 'select')
     updateOcclusionTargets()

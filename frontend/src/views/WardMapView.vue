@@ -27,7 +27,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import Modal from '@/components/Modal.vue'
-import WardBedEditor from '@/components/WardBedEditor.vue'
+import WardSlotEditor from '@/components/WardSlotEditor.vue'
 import WardBedManager from '@/components/WardBedManager.vue'
 import WardScene3D from '@/components/WardScene3D.vue'
 import WardSimulationPanel from '@/components/WardSimulationPanel.vue'
@@ -87,23 +87,27 @@ const stats = computed(() => {
 })
 
 /**
- * 模拟空间编辑器（Ward Map Editor V2）—— **只读草稿**。
+ * 模拟空间编辑器（Ward Slot Sandbox V2）—— **只读草稿**。
  *
  * 边界：草稿只存在于本页内存；合成床位 id 为负数，**永不**进入任何业务接口。
  * 进入编辑态后会互斥退出沙盘，避免「编辑草稿」与「沙盘推演」两套叠加态互相污染。
  */
 const editorActive = ref(false)
 const editorState = ref<EditorState | null>(null)
-/** 三维编辑器面板实例：场景把拖放落点交回它执行 */
-const editorRef = ref<InstanceType<typeof WardBedEditor> | null>(null)
-const editTool = ref<'select' | 'add' | 'move'>('select')
+/** 槽位式沙盘面板实例：场景把地面槽位的点击交回它执行 */
+const editorRef = ref<InstanceType<typeof WardSlotEditor> | null>(null)
+const editTool = ref<'select' | 'add' | 'move' | 'remove'>('select')
 const editRoomId = ref(0)
 const editRotation = ref<Rotation>(0)
 
 /** 正式床位管理（仅 ADMIN、非演示数据）：与模拟编辑互斥 */
 const managerActive = ref(false)
 
-function onEditIntent(tool: 'select' | 'add' | 'move', roomId: number, rotation: Rotation) {
+function onEditIntent(
+  tool: 'select' | 'add' | 'move' | 'remove',
+  roomId: number,
+  rotation: Rotation,
+) {
   editTool.value = tool
   editRoomId.value = roomId
   editRotation.value = rotation
@@ -697,7 +701,7 @@ onBeforeUnmount(() => {
           @close="managerActive = false"
         />
 
-        <WardBedEditor
+        <WardSlotEditor
           ref="editorRef"
           :active="editorActive"
           :beds="realBeds"
@@ -705,6 +709,7 @@ onBeforeUnmount(() => {
           :selected-id="selected?.id ?? null"
           @change="editorUpdate"
           @intent="onEditIntent"
+          @locate="locateSandboxBed"
           @close="exitEditor"
         />
 
@@ -755,6 +760,7 @@ onBeforeUnmount(() => {
             @select="onSelectBed"
             @edit-select="onEditSelect"
             @edit-place="onEditPlace"
+            @edit-cancel="editorRef?.cancel()"
             @unavailable="webglFailed = true"
           />
           <div
