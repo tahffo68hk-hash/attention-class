@@ -1,9 +1,18 @@
+# 构建上下文排除项：本机凭据、缓存和虚拟环境不进镜像
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .venv/
 venv/
+htmlcov/
+.coverage
+.coverage.*
+# 真实凭据只在本机 .env 里，绝不能被打进镜像层
 .env
+.env.*
+!.env.example
 *.log
+.mysql/
 alembic/versions/__pycache__/

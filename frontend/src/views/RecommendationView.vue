@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   createAllocation,
   fetchAdmissionRequests,
+  fetchAllocations,
   fetchRecommendations,
 } from '@/api/business'
 import { ApiError } from '@/api/http'
@@ -41,10 +42,28 @@ async function loadCandidates() {
   listLoading.value = true
   listError.value = ''
   try {
-    const page = await fetchAdmissionRequests({ status: 'PRE_ADMITTED', page_size: 100 })
-    candidates.value = page.items
-    if (!selectedId.value && page.items.length) {
-      selectRequest(page.items[0].id)
+    // 同时取「待入院住院证」与「分配记录」：已有活动分配（预占用 / 已入住）的住院证
+    // 即使状态仍是 PRE_ADMITTED，也不应再出现在推荐队列里 —— 否则用户选中后点
+    // 「采纳推荐」，只会拿到后端 409 REQUEST_ALREADY_ALLOCATED。
+    const [page, allocations] = await Promise.all([
+      fetchAdmissionRequests({ status: 'PRE_ADMITTED', page_size: 100 }),
+      fetchAllocations({ page_size: 200 }),
+    ])
+    const taken = new Set(
+      allocations.items
+        .filter((item) => item.status === 'RESERVED' || item.status === 'ADMITTED')
+        .map((item) => item.admission_request_id),
+    )
+    const pending = page.items.filter((item) => !taken.has(item.id))
+    candidates.value = pending
+
+    if (selectedId.value !== null && !pending.some((item) => item.id === selectedId.value)) {
+      // 当前选中项已不在队列中（刚分配掉 / 被取消），清空右侧并回退到首条
+      selectedId.value = null
+      result.value = null
+    }
+    if (!selectedId.value && pending.length) {
+      selectRequest(pending[0].id)
     }
   } catch (err) {
     listError.value = err instanceof ApiError ? `[${err.code}] ${err.message}` : '加载待入院列表失败'
@@ -57,7 +76,8 @@ async function loadRecommendations() {
   if (!selectedId.value) return
   recLoading.value = true
   recError.value = ''
-  actionMessage.value = ''
+  // 注意：这里不能清 actionMessage —— 采纳成功后正是先刷新推荐再展示结果，
+  // 清掉会把「已预占用床位 #N」的成功提示立刻抹掉，用户看不到反馈。
   actionError.value = ''
   try {
     result.value = await fetchRecommendations(selectedId.value, limit.value)
@@ -74,6 +94,7 @@ function selectRequest(id: number) {
   if (selectedId.value === id) return
   selectedId.value = id
   result.value = null
+  actionMessage.value = ''
   loadRecommendations()
 }
 
@@ -92,12 +113,14 @@ async function adopt(bedId?: number) {
       admission_request_id: selectedId.value,
       bed_id: bedIdSafe,
     })
-    actionMessage.value = `已预占用床位 ${alloc.bed_code ?? ''}（分配 #${alloc.id}，状态：${
+    const message = `已预占用床位 ${alloc.bed_code ?? ''}（分配 #${alloc.id}，状态：${
       alloc.status_label ?? alloc.status
     }）。请前往「分配与住院办理」办理入住。`
-    // 该住院证已离开待入院队列，重新拉列表与推荐
+    // 该住院证已离开可推荐队列，重新拉列表与推荐；成功提示在刷新之后写入，
+    // 否则会被队列刷新 / 推荐重算过程中的状态清理覆盖掉。
     await loadCandidates()
     if (selectedId.value) await loadRecommendations()
+    actionMessage.value = message
   } catch (err) {
     actionError.value =
       err instanceof ApiError ? `[${err.code}] ${err.message}` : '预占用失败'
@@ -154,7 +177,7 @@ function cardReasonLines(rec: BedRecommendation) {
       <div class="list-pane">
         <div v-if="listLoading" class="empty">加载中…</div>
         <div v-else-if="!candidates.length" class="empty">
-          暂无待入院住院证。<br />请先在「住院证与预登记」完成预登记。
+          队列中没有「待入院且尚未占用床位」的住院证。<br />请先在「住院证与预登记」完成预登记。
         </div>
         <div
           v-for="item in candidates"

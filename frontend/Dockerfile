@@ -3,9 +3,12 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
+# 只拷贝依赖清单，最大化命中缓存；优先 npm ci（严格按 lock 安装），
+# lock 与 package.json 不同步时回落到 npm install。
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 COPY package.json package-lock.json* ./
-RUN npm config set registry https://registry.npmmirror.com \
-    && npm install --no-audit --no-fund
+RUN npm config set registry "${NPM_REGISTRY}" \
+    && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund)
 
 COPY . .
 RUN npm run build

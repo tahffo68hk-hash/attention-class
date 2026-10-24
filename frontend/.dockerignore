@@ -1,5 +1,11 @@
-node_modules
-dist
-.vite
-.env.local
+# 构建上下文排除项
+# 关键：必须排除本机 node_modules —— 否则 COPY . . 会用 Windows 版依赖
+# 覆盖镜像里已装好的 Linux 依赖，rollup/esbuild 原生模块会直接报错。
+node_modules/
+dist/
+.vite/
+.env
+.env.*
+!.env.example
+*.log
 npm-debug.log*

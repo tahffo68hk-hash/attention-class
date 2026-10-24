@@ -6,14 +6,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# 先装依赖，利用镜像层缓存
+# 先装依赖，利用镜像层缓存；镜像源可用 --build-arg 覆盖（默认国内镜像）
+ARG PIP_INDEX=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_HOST=mirrors.aliyun.com
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
-        --trusted-host mirrors.aliyun.com -r requirements.txt
+RUN pip install --no-cache-dir -i "${PIP_INDEX}" --trusted-host "${PIP_HOST}" -r requirements.txt
 
 COPY . .
 
 EXPOSE 8000
 
-# 容器启动时：先迁移，再起服务
-CMD ["sh", "-c", "python -m alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# 迁移 -> 空库时写演示数据 -> 起服务，见 docker-entrypoint.sh
+CMD ["sh", "docker-entrypoint.sh"]

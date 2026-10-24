@@ -1,15 +1,23 @@
 # 医院床位智能分配与住院入院预办理原型系统 —— Docker Compose
 #
-#   docker compose up -d --build        启动全部服务
+#   cp .env.example .env                 # 先准备凭据（见下方说明）
+#   docker compose up -d --build         # 一条命令拉起 MySQL + 后端 + 前端
+#
 #   docker compose logs -f backend      查看后端日志
-#   docker compose exec backend python seed.py   写入演示数据
+#   docker compose exec backend python -m pytest -q tests   # 在容器内跑测试
+#   docker compose down                 停止（保留数据卷）
 #   docker compose down -v              停止并清空数据卷
 #
-# ⚠️ 凭据来源：本文件**不含任何真实凭据**。所有口令/密钥均由 compose 变量插值
-#    从「本目录下的 .env」（被 .gitignore 排除）读取；未提供时 compose 会直接报错，
-#    而不是静默使用一个弱默认值。
-#    准备方式：
-#      cp .env.example .env      # 然后填入 MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD / SECRET_KEY
+# ⚠️ 凭据来源：本文件**不含任何真实凭据**。所有口令/密钥均由变量插值从
+#    本目录的 .env（被 .gitignore 排除）读取；缺项时 compose 直接报错，
+#    而不是静默使用弱默认值。
+#    准备方式：cp .env.example .env，然后填 MYSQL_ROOT_PASSWORD /
+#    MYSQL_PASSWORD / SECRET_KEY（生成方式见该文件注释）。
+#
+# 首次启动流程（自动，无需手工介入）：
+#   mysql 健康 -> backend 执行 alembic upgrade head -> 检测到空库则写入演示数据
+#   -> uvicorn 起服务 -> frontend(nginx) 反代 /api 到 backend
+#   数据卷非空时不会重复写入演示数据（AUTO_SEED=false 可完全关闭）。
 #
 # 服务端口：
 #   前端  http://localhost:8080
@@ -23,7 +31,7 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env 中设置 MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: hospital
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-hospital}
       MYSQL_USER: hospital_app
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?必须在 .env 中设置 MYSQL_PASSWORD}
       TZ: Asia/Shanghai
@@ -35,12 +43,15 @@ services:
       - "127.0.0.1:3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      # 首次初始化额外建测试库（仅在数据卷为空时执行）
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       # $$ 转义为容器内的 $，口令不在 compose 配置里以明文出现
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 5s
       timeout: 5s
       retries: 20
+      start_period: 30s
 
   backend:
     build:
@@ -48,16 +59,26 @@ services:
     container_name: hospital-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: mysql+pymysql://hospital_app:${MYSQL_PASSWORD:?}@mysql:3306/hospital?charset=utf8mb4
-      TEST_DATABASE_URL: mysql+pymysql://hospital_app:${MYSQL_PASSWORD:?}@mysql:3306/hospital?charset=utf8mb4
+      DATABASE_URL: mysql+pymysql://hospital_app:${MYSQL_PASSWORD:?}@mysql:3306/${MYSQL_DATABASE:-hospital}?charset=utf8mb4
+      # 测试库独立，避免 pytest 的 DROP TABLE 打到演示库
+      TEST_DATABASE_URL: mysql+pymysql://hospital_app:${MYSQL_PASSWORD:?}@mysql:3306/hospital_test?charset=utf8mb4
       SECRET_KEY: ${SECRET_KEY:?必须在 .env 中设置 SECRET_KEY}
       CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      AUTO_SEED: ${AUTO_SEED:-true}
       TZ: Asia/Shanghai
     depends_on:
       mysql:
         condition: service_healthy
     ports:
       - "8000:8000"
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)\""
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   frontend:
     build:
@@ -65,7 +86,8 @@ services:
     container_name: hospital-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "8080:80"
 
