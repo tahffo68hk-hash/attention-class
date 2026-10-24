@@ -180,6 +180,15 @@ README 重写，删掉了所有 `E:\...`、`C:\...` 本机路径、`PowerShell �
 * **原因**：文档停在早期里程碑，后续开发没回填。
 * **修法**：README 全量重写，数字全部以本次实测为准（162 项测试、51 端点、12 页面）。
 
+### P10　容器启动脚本可能因为 CRLF 直接在容器里失效
+
+* **现象**：`git commit` 时 Git 警告 `LF will be replaced by CRLF`；Windows 上签出的
+  `backend/docker-entrypoint.sh` 会带 `\r\n`，进镜像后 `sh` 报
+  `: not found` / exec format error。
+* **原因**：仓库没有 `.gitattributes`，Windows 的 `core.autocrlf` 默认行为会改写换行符。
+* **修法**：新增 `.gitattributes`，对 `*.sh` / `Dockerfile` / `*.yml` / `*.sql` 强制 `eol=lf`，
+  图片标 `binary`；`backend/docker-entrypoint.sh` 已 renormalize，索引内 CRLF 数为 0。
+
 ---
 
 ## 四、仍有风险 / 未完成
@@ -219,6 +228,7 @@ README 重写，删掉了所有 `E:\...`、`C:\...` 本机路径、`PowerShell �
 ```
 API.md                                       接口总表（源码生成）
 POLISH.md                                    本文件
+.gitattributes                               强制 shell/sql/compose 使用 LF
 docker-compose.yml                           重写（healthcheck / 测试库 / init 挂载）
 docker/mysql/init/01_create_test_database.sql
 backend/docker-entrypoint.sh
