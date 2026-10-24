@@ -168,9 +168,10 @@ Authorization: Bearer <access_token>   # 之后所有请求带上
 
 | 状态码 | 典型 code | 含义 |
 | --- | --- | --- |
-| 400 | `VALIDATION_ERROR` | 参数校验失败 |
-| 401 | `UNAUTHENTICATED` | 未带令牌或令牌无效/过期 |
+| 400 | `VALIDATION_ERROR` | 业务参数不合法 |
+| 401 | `AUTH_TOKEN_INVALID` | 未带令牌 / 令牌无效或过期 |
 | 403 | `PERMISSION_DENIED` | 角色不足（会写审计） |
 | 404 | `NOT_FOUND` | 资源不存在 |
-| 409 | `ILLEGAL_STATE_TRANSITION` / `BED_NOT_AVAILABLE` / `REQUEST_ALREADY_ALLOCATED` | 状态机或并发冲突 |
-| 422 | `HARD_CONSTRAINT_VIOLATION` | 违反硬约束（科室 / 性别 / 隔离） |
+| 409 | `ILLEGAL_STATE_TRANSITION` / `BED_NOT_AVAILABLE` / `REQUEST_ALREADY_ALLOCATED` | 状态机非法流转 / 并发抢床 / 重复分配 |
+| 422 | `VALIDATION_ERROR` / `HARD_CONSTRAINT_VIOLATION` | 请求体校验失败，或违反 H1–H4 硬约束（`detail` 列出违反项） |
+| 500 | `INTERNAL_ERROR` | 未预期异常（响应里带 `request_id` 便于查日志） |
