@@ -147,10 +147,10 @@ npm run dev
 
 | 状态码 | 典型 code | 场景 |
 | --- | --- | --- |
-| 401 | `UNAUTHENTICATED` | 未带令牌 / 令牌过期 |
+| 401 | `AUTH_TOKEN_INVALID` | 未带令牌 / 令牌过期 |
 | 403 | `PERMISSION_DENIED` | 角色不足（同时写审计） |
 | 409 | `ILLEGAL_STATE_TRANSITION` / `BED_NOT_AVAILABLE` / `REQUEST_ALREADY_ALLOCATED` | 状态机非法流转 / 并发抢床 / 重复分配 |
-| 422 | `HARD_CONSTRAINT_VIOLATION` | 违反 H1–H4 硬约束，返回具体违反项 |
+| 422 | `HARD_CONSTRAINT_VIOLATION` / `VALIDATION_ERROR` | 违反 H1–H4 硬约束（返回具体违反项）或请求体校验失败 |
 
 ## 七、测试
 
