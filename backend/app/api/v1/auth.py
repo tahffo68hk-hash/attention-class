@@ -27,7 +27,10 @@ router = APIRouter(prefix="/auth", tags=["认证"])
     "/login",
     response_model=TokenResponse,
     summary="登录获取访问令牌",
-    description="演示账号见 README（admin / doctor01 / nurse01 / viewer01）。",
+    description=(
+        "本地种子账号，仅供演示，生产必须修改口令："
+        "admin / doctor01 / nurse01 / viewer01（另有 doctor02、nurse02）。见 README。"
+    ),
 )
 def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenResponse:
     user = db.execute(

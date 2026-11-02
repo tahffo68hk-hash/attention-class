@@ -18,6 +18,8 @@
 #   mysql 健康 -> backend 执行 alembic upgrade head -> 检测到空库则写入演示数据
 #   -> uvicorn 起服务 -> frontend(nginx) 反代 /api 到 backend
 #   数据卷非空时不会重复写入演示数据（AUTO_SEED=false 可完全关闭）。
+#   自动写入的账号口令是本地种子（见 README），只供本机演示。
+#   共享或生产环境必须 AUTO_SEED=false，并修改全部账号口令。
 #
 # 服务端口：
 #   前端  http://localhost:8080

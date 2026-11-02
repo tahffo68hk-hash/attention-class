@@ -4,8 +4,9 @@
 床位推荐 → 预占用 → 入住 → 出院 → 床位释放」的完整闭环，带 JWT 鉴权、角色权限、操作审计与
 并发安全分配。
 
-> 全部数据为**虚构演示数据**；**不接真实支付**（预交金为模拟记账）、**不调用付费大模型**
-> （可选 DeepSeek 默认关闭），评分全部在本地确定性计算。
+> 全部数据为**虚构演示数据**。床位排序是**硬约束过滤 + 五项加权评分**，在本地确定性计算。
+> **不是深度学习，也不是大模型。** 可选的 DeepSeek 只生成待复核的文字说明，默认关闭，
+> **不参与打分、不写分配**。预交金是模拟记账，不接真实支付。
 
 ![登录](demo-screenshots/01-login.png)
 
@@ -28,7 +29,10 @@
 
 **第二步：软约束加权评分（0–100）** —— `backend/app/services/recommendation.py`
 
-| 维度 | 权重 | 说明 |
+下面的权重是 **`WEIGHTS` 里的原型默认值，未经业务定标**。它们只为演示一条可解释的排序，
+不是临床结论，也不是医院运营参数。正式使用前应由业务方重新标定。
+
+| 维度 | 原型权重 | 说明 |
 | --- | --- | --- |
 | 距离适配 | 0.32 | 护士站加权距离；**优先级越高越靠前**，轻症让出近端床位 |
 | 优先级-床型适配 | 0.28 | 危重/重症与床型的匹配度，随优先级非线性上升 |
@@ -127,16 +131,24 @@ npm run dev
 * 管理后台 <http://127.0.0.1:5173/>｜Swagger <http://127.0.0.1:8000/docs>
 * 前端开发服务器已把 `/api`、`/health`、`/docs`、`/openapi.json` 代理到 8000，无跨域问题。
 
-## 五、演示账号
+## 五、演示账号（仅本地种子）
+
+下表口令由 `backend/seed.py` 写入；Docker 在空库且 `AUTO_SEED=true`（默认）时也会跑同一份种子。
+它们是**本地演示专用的公开固定口令**，不是生产凭据，也不是真实用户。
 
 | 账号 | 口令 | 角色 | 能做什么 |
 | --- | --- | --- | --- |
 | `admin` | `admin123` | 管理员 | 全部权限 + 查看审计日志 + 患者明文 |
 | `doctor01` | `doctor123` | 医生 | 开住院证、预入院登记、看推荐 |
+| `doctor02` | `doctor123` | 医生 | 与 `doctor01` 相同（种子里的第二名医生） |
 | `nurse01` | `nurse123` | 护士 | 推荐、预占用、入住、出院、释放 |
+| `nurse02` | `nurse123` | 护士 | 与 `nurse01` 相同（种子里的第二名护士） |
 | `viewer01` | `viewer123` | 只读 | 仅查看列表与看板 |
 
-这些是**演示用固定账号**，通过 `python seed.py` 写入，非真实用户数据。
+登录页只放了前台常用的四个按钮（`admin` / `doctor01` / `nurse01` / `viewer01`）。
+
+**部署到任何共享环境或生产环境之前，必须修改全部账号口令**，并设置 `AUTO_SEED=false`，
+避免空库再次写入这些种子账号。测试夹具里的同名口令只用于库名以 `_test` 结尾的隔离测试库。
 
 ## 六、接口与文档
 
@@ -160,7 +172,10 @@ python -m pytest -q tests tests_ward_map                      # 主套件（真�
 python -m pytest -q tests_m1_local tests_p1p2 tests_p15 tests_p25   # SQLite 行为套件
 ```
 
-**当前结果：`87 passed` + `75 passed` = 162 项全通过**（MySQL 8.0，耗时约 60s / 15s）。
+**记录结果：`87 passed` + `75 passed` = 162 项全通过**（MySQL 8.0，耗时约 60s / 15s）。
+自该次运行以来，这两条命令覆盖的测试文件没有再改；按当前源码收集（含 `parametrize` 展开）仍是 **87 + 75**。
+
+未计入 162、也不在上面两条命令里的套件：`tests_p3` **12** 项、`tests_p4` **38** 项（按同样方式从源码收集）。
 
 | 套件 | 用例 | 覆盖点 |
 | --- | --- | --- |
@@ -171,7 +186,8 @@ python -m pytest -q tests_m1_local tests_p1p2 tests_p15 tests_p25   # SQLite 行
 | `tests/test_recommendation.py` | 9 | 普通/隔离/性别/无空床场景、优先级非线性验证 |
 | `tests/test_smoke.py` | 7 | 健康检查、OpenAPI、迁移版本、统一错误 |
 | `tests/test_p3_gate_mysql.py` | 4 | 三维沙盘只读性与权限闸门 |
-| `tests/test_ward_editor_mysql.py` + `tests_ward_map/` | 22 | 床位增删改、槽位约束、沙盘复用正式评分 |
+| `tests/test_ward_editor_mysql.py` | 8 | 正式床位增删改、槽位冲突、非管理员 403（parametrize 展开 3 个角色） |
+| `tests_ward_map/` | 22 | 态势图只读、沙盘复用正式评分、编辑器迁移 |
 | `tests_m1_local` / `tests_p1p2` / `tests_p15` / `tests_p25` | 75 | 状态机顺序与回滚、优化器、合成实验、故障注入（SQLite，无需 MySQL） |
 
 `tests/conftest.py` 有 **fail-closed 守卫**：`TEST_DATABASE_URL` 不是 `*_test` 库名就直接拒绝，
@@ -182,7 +198,7 @@ python -m pytest -q tests_m1_local tests_p1p2 tests_p15 tests_p25   # SQLite 行
 | | |
 | --- | --- |
 | ![登录](demo-screenshots/01-login.png) | ![床位列表](demo-screenshots/02-bed-list.png) |
-| 登录（演示账号一键填充） | 床位管理（44 张床，多条件筛选） |
+| 登录（本地种子账号一键填充） | 床位管理（44 张床，多条件筛选） |
 | ![床位推荐](demo-screenshots/03-allocate.png) | ![审计日志](demo-screenshots/04-audit-log.png) |
 | 推荐 + 预占用成功（五项评分明细） | 操作审计（含越权失败记录） |
 | ![OpenAPI](demo-screenshots/05-openapi-docs.png) | ![pytest](demo-screenshots/06-pytest-pass.png) |
@@ -215,7 +231,7 @@ python -m pytest -q tests_m1_local tests_p1p2 tests_p15 tests_p25   # SQLite 行
 
 ## 十、已知限制
 
-* 表结构、状态机取值、评分权重均为**待业务方确认的原型草案**，不是临床结论。
+* 表结构、状态机取值、评分权重均为**未经业务定标的原型草案**（权重 0.32 / 0.28 / 0.18 / 0.12 / 0.10），不是临床结论。
 * 未接真实 HIS / 支付 / 短信；未做压测（单科室数十张床位的规模不需要）。
 * 三维病区态势图的空间坐标是**模拟排布**（非 BIM 图纸），只影响展示，不影响评分。
 * Docker 编排文件已通过 `docker compose config` 静态校验，并在容器内验证过启动脚本的
@@ -226,7 +242,8 @@ python -m pytest -q tests_m1_local tests_p1p2 tests_p15 tests_p25   # SQLite 行
 
 | 文档 | 内容 |
 | --- | --- |
-| [API.md](API.md) | 接口总表（源码生成） |
+| [LICENSE](LICENSE) | MIT 许可证 |
+| [API.md](API.md) | 接口总表（源码生成，51 个 `/api/v1` 端点） |
 | [POLISH.md](POLISH.md) | 本次工程化整理做了什么、修过什么问题、残留风险 |
 | [docs/architecture.md](docs/architecture.md) | 分层与关键设计决策 |
 | [docs/er-diagram.md](docs/er-diagram.md) | E-R 图与索引/状态约束 |
