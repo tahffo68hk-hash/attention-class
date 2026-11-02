@@ -22,7 +22,7 @@ if existing:
     print(f"[entrypoint] users={existing}，跳过演示数据初始化（避免覆盖已有数据）")
     sys.exit(0)
 
-print("[entrypoint] 检测到空库，写入演示数据")
+print("[entrypoint] 检测到空库，写入本地演示种子（口令仅供本地演示；生产必须改口令并设 AUTO_SEED=false）")
 import seed
 
 seed.main()

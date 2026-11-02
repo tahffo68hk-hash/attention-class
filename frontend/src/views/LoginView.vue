@@ -49,7 +49,10 @@ async function submit() {
   <div class="login-page">
     <div class="login-card card">
       <h1 class="page-title" style="font-size: 18px">医院床位智能分配与住院入院预办理系统</h1>
-      <p class="page-subtitle">请使用演示账号登录管理后台（仅虚构数据）</p>
+      <p class="page-subtitle">本地种子账号，仅供本机演示（虚构数据）。</p>
+      <div class="alert alert--warn">
+        这些口令由 seed 写入，只用于本地演示。部署到共享或生产环境前必须修改全部账号口令，并关闭自动种子（AUTO_SEED=false）。
+      </div>
 
       <div v-if="errorMessage" class="alert alert--danger">{{ errorMessage }}</div>
 
@@ -74,7 +77,7 @@ async function submit() {
       </form>
 
       <div style="margin-top: 20px">
-        <div class="note" style="margin-bottom: 6px">演示账号（点击填充）：</div>
+        <div class="note" style="margin-bottom: 6px">本地种子账号（点击填充，勿用于生产）：</div>
         <div>
           <button
             v-for="acc in demoAccounts"

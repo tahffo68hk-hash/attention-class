@@ -5,6 +5,10 @@
     python seed.py --no-reset # 追加（默认仍会先清空业务表）
 
 全部数据均为**虚构**，不包含任何真实患者/医疗数据。
+
+账号与口令是**本地种子**（admin/admin123、doctor01 与 doctor02/doctor123、
+nurse01 与 nurse02/nurse123、viewer01/viewer123）。只供本机演示。
+部署到共享或生产环境前必须修改全部口令，并关闭自动种子（AUTO_SEED=false）。
 """
 
 from __future__ import annotations
@@ -485,7 +489,11 @@ def main() -> None:
         )
         print(f"       患者 {db.query(Patient).count()} 人 / 医生 {db.query(Doctor).count()} 人 / 用户 {db.query(User).count()} 个")
         print(f"       住院证 {db.query(AdmissionRequest).count()} 张 / 待入院队列 {pending} 人")
-        print("       演示账号：admin/admin123、doctor01/doctor123、nurse01/nurse123、viewer01/viewer123")
+        print(
+            "       本地种子账号（仅演示，生产必须改口令并关闭 AUTO_SEED）："
+            "admin/admin123、doctor01/doctor123、doctor02/doctor123、"
+            "nurse01/nurse123、nurse02/nurse123、viewer01/viewer123"
+        )
     except Exception:
         db.rollback()
         raise

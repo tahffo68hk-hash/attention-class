@@ -10,7 +10,7 @@
 
 | 路由 | 文件 | 说明 |
 | --- | --- | --- |
-| `/login` | `views/LoginView.vue` | 账号口令登录，提供 4 个演示账号一键填充 |
+| `/login` | `views/LoginView.vue` | 账号口令登录。四个一键填充按钮是本地种子账号，生产必须改口令 |
 | `/dashboard` | `views/DashboardView.vue` | 管理看板 |
 | `/admissions` | `views/AdmissionsView.vue` | 住院证列表 + 开具 + 预入院登记 |
 | `/recommendations` | `views/RecommendationView.vue` | 床位推荐结果与可解释评分 |
